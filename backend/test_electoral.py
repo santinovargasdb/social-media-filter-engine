@@ -41,3 +41,41 @@ def test_parse_csv_header_invalido_es_error():
 def test_parse_csv_vacio_devuelve_vacio():
     rows, warnings = el.parse_pollster_csv("")
     assert rows == [] and warnings == []
+
+
+def _analysis_fake(items):
+    """Devuelve un run_with_rotation fake que responde un mirror fijo."""
+    return lambda prompt: (items, None)
+
+
+def test_analyze_mapea_por_id_y_sanea_postura(monkeypatch):
+    import gemini_client as gc
+    posts_by_id = {
+        "Post_0": {"text": "Milei la rompe", "network": "twitter"},
+        "Post_1": {"text": "Basta de Milei", "network": "instagram"},
+    }
+    mirror = [
+        {"id": "Post_0", "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}],
+         "cita": "Milei la rompe", "es_electoral": True},
+        {"id": "Post_1", "candidatos": [{"nombre": "Javier Milei", "postura": "INVALIDA", "confianza": 0.8}],
+         "cita": "Basta de Milei", "es_electoral": True},
+    ]
+    monkeypatch.setattr(gc, "run_with_rotation", _analysis_fake(mirror))
+    out = el.analyze_posts_electoral(posts_by_id)
+    assert out[0]["candidatos"][0]["postura"] == "a_favor"
+    # postura inválida se descarta -> candidato sin postura válida queda fuera
+    assert out[1]["candidatos"] == []
+
+
+def test_analyze_upstream_falla_devuelve_none(monkeypatch):
+    import gemini_client as gc
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: (None, 503))
+    assert el.analyze_posts_electoral({"Post_0": {"text": "x", "network": "twitter"}}) is None
+
+
+def test_analyze_ids_inventados_se_ignoran(monkeypatch):
+    import gemini_client as gc
+    monkeypatch.setattr(gc, "run_with_rotation",
+                        _analysis_fake([{"id": "Post_999", "candidatos": [], "cita": "", "es_electoral": False}]))
+    out = el.analyze_posts_electoral({"Post_0": {"text": "x", "network": "twitter"}})
+    assert out == []  # el id inventado no matchea ningún post
