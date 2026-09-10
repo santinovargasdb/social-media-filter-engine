@@ -171,6 +171,62 @@ def build_evidence(analysis: list[dict], posts_by_id: dict[str, dict], por_candi
     return evidencia
 
 
+def _keys_match(key_redes: str, key_csv: str) -> bool:
+    """Considera que dos claves canónicas refieren al mismo candidato si una
+    es subconjunto de palabras de la otra (permite alias de apellido solo)."""
+    if key_redes == key_csv:
+        return True
+    words_redes = set(key_redes.split())
+    words_csv = set(key_csv.split())
+    return words_csv.issubset(words_redes) or words_redes.issubset(words_csv)
+
+
+def compare_vs_pollsters(candidatos: list[dict], pollster_rows: list[dict]) -> tuple[list[dict], list[str]]:
+    """Cruza los % de redes con los del CSV por candidato (última fecha por
+    consultora). Devuelve (comparacion, warnings)."""
+    # Última fecha por (candidato_key, consultora).
+    latest: dict[tuple[str, str], dict] = {}
+    for r in pollster_rows:
+        k = (canonical_key(r["candidato"]), r["consultora"])
+        if k not in latest or r["fecha"] > latest[k]["fecha"]:
+            latest[k] = r
+    # Agrupar por candidato_key -> {consultora: pct}.
+    por_candidato: dict[str, dict[str, float]] = {}
+    for (cand_key, consultora), r in latest.items():
+        por_candidato.setdefault(cand_key, {})[consultora] = r["porcentaje"]
+
+    comparacion: list[dict] = []
+    matched_csv_keys: set[str] = set()
+    for c in candidatos:
+        key = canonical_key(c["nombre"])
+        # Recopilar consultoras que hacen match (exacto o alias de palabras).
+        consultoras_pct: dict[str, float] = {}
+        for csv_key, por_cons in por_candidato.items():
+            if _keys_match(key, csv_key):
+                matched_csv_keys.add(csv_key)
+                consultoras_pct.update(por_cons)
+        consultoras = [
+            {"consultora": nombre, "pct": pct, "gap": round(c["pct"] - pct, 1)}
+            for nombre, pct in sorted(consultoras_pct.items())
+        ]
+        if consultoras_pct:
+            promedio = round(sum(consultoras_pct.values()) / len(consultoras_pct), 1)
+            gap_promedio = round(c["pct"] - promedio, 1)
+        else:
+            promedio, gap_promedio = None, None
+        comparacion.append({
+            "candidato": c["nombre"], "redes_pct": c["pct"], "consultoras": consultoras,
+            "promedio_consultoras": promedio, "gap_promedio": gap_promedio,
+        })
+
+    warnings: list[str] = []
+    for cand_key, _consultoras_pct in por_candidato.items():
+        if cand_key not in matched_csv_keys:
+            nombre = next(r["candidato"] for r in pollster_rows if canonical_key(r["candidato"]) == cand_key)
+            warnings.append(f"'{nombre}' aparece en el CSV de consultoras pero no se detectó en redes.")
+    return comparacion, warnings
+
+
 def analyze_posts_electoral(posts_by_id: dict[str, dict]) -> list[dict] | None:
     """Clasifica cada post (candidato + postura + confianza) vía Gemini. Devuelve
     el mirror saneado por id, o None si el transporte falló (upstream)."""

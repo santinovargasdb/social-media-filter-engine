@@ -137,3 +137,32 @@ def test_build_evidence_ordena_por_confianza_y_adjunta_post():
     assert ev[0]["cita"] == "cita fuerte"  # mayor confianza primero
     assert ev[0]["post"]["post_url"] == "u1"
     assert ev[0]["candidato"] == "Milei"
+
+
+def test_compare_calcula_gap_y_promedio():
+    candidatos = [{"nombre": "Javier Milei", "pct": 44.0, "pos": 0, "neg": 0, "neu": 0, "menciones": 0}]
+    rows = [
+        {"consultora": "X", "fecha": "2026-08-01", "candidato": "milei", "porcentaje": 42.0},
+        {"consultora": "X", "fecha": "2026-08-20", "candidato": "Milei", "porcentaje": 40.0},  # más reciente gana
+        {"consultora": "Y", "fecha": "2026-08-10", "candidato": "Javier Milei", "porcentaje": 46.0},
+    ]
+    comp, warnings = el.compare_vs_pollsters(candidatos, rows)
+    milei = comp[0]
+    consultora_x = next(c for c in milei["consultoras"] if c["consultora"] == "X")
+    assert consultora_x["pct"] == 40.0 and consultora_x["gap"] == 4.0  # 44 - 40
+    assert milei["promedio_consultoras"] == 43.0  # (40 + 46)/2
+    assert milei["gap_promedio"] == 1.0           # 44 - 43
+
+
+def test_compare_avisa_no_reconciliados():
+    candidatos = [{"nombre": "Milei", "pct": 44.0, "pos": 0, "neg": 0, "neu": 0, "menciones": 0}]
+    rows = [{"consultora": "X", "fecha": "2026-08-01", "candidato": "Kicillof", "porcentaje": 30.0}]
+    comp, warnings = el.compare_vs_pollsters(candidatos, rows)
+    assert comp[0]["consultoras"] == [] and comp[0]["promedio_consultoras"] is None
+    assert any("Kicillof" in w for w in warnings)   # candidato del CSV sin par en redes
+
+
+def test_compare_sin_csv_devuelve_solo_redes():
+    candidatos = [{"nombre": "Milei", "pct": 100.0, "pos": 0, "neg": 0, "neu": 0, "menciones": 0}]
+    comp, warnings = el.compare_vs_pollsters(candidatos, [])
+    assert comp[0]["consultoras"] == [] and warnings == []
