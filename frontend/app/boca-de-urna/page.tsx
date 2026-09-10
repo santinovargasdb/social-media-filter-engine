@@ -4,6 +4,9 @@ import { useCallback, useState } from "react";
 import UrnaParamsBar from "@/components/urna/UrnaParamsBar";
 import DisclaimerBanner from "@/components/urna/DisclaimerBanner";
 import { runBocaDeUrna, UrnaRequest, UrnaResponse, UrnaStatus } from "@/lib/urnaApi";
+import SentimentBarChart from "@/components/urna/SentimentBarChart";
+import EvidencePanel from "@/components/urna/EvidencePanel";
+import ComparisonTable from "@/components/urna/ComparisonTable";
 
 const DEFAULT_DISCLAIMER =
   "Este indicador refleja el clima de conversación en redes sociales sobre publicaciones públicas indexadas. No es una muestra representativa del electorado ni una proyección de resultado electoral. Sirve como termómetro direccional, complementario a las encuestas de consultoras.";
@@ -42,7 +45,35 @@ export default function BocaDeUrnaPage() {
             ⚠️ {error}
           </div>
         )}
-        {data && <pre style={{ fontSize: "12px", overflow: "auto" }}>{JSON.stringify(data, null, 2)}</pre>}
+        {data && (
+          <>
+            {data.meta.warnings.length > 0 && (
+              <ul style={{ margin: "0 0 16px", padding: "10px 14px 10px 30px", fontSize: "12px",
+                borderRadius: "var(--radius-sm)", background: "rgba(127,127,127,0.08)", color: "var(--text-secondary)" }}>
+                {data.meta.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            )}
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "12px" }}>
+              {data.meta.total_posts} publicaciones analizadas · {data.meta.posts_electorales} electorales
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: "24px", alignItems: "start" }}>
+              <section style={{ display: "flex", flexDirection: "column", gap: "20px", minWidth: 0 }}>
+                <div>
+                  <h3 style={{ fontSize: "14px", marginBottom: "10px" }}>Sentimiento neto en redes</h3>
+                  <SentimentBarChart candidatos={data.candidatos} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: "14px", marginBottom: "10px" }}>Evidencia (citas)</h3>
+                  <EvidencePanel evidencia={data.evidencia} />
+                </div>
+              </section>
+              <section style={{ minWidth: 0 }}>
+                <h3 style={{ fontSize: "14px", marginBottom: "10px" }}>Redes vs consultoras</h3>
+                <ComparisonTable comparacion={data.comparacion} />
+              </section>
+            </div>
+          </>
+        )}
       </div>
     </main>
   );
