@@ -254,6 +254,7 @@ Recibe los posts seleccionados y devuelve el informe en formato Word (`.docx`).
 | HTTP | Causa |
 |------|-------|
 | `400` | CSV de consultoras con header inválido o dato malformado irrecuperable |
+| `500` | error interno inesperado |
 | `503` | Gemini o SerpAPI sin cuota o caídos |
 
 **CSV de consultoras — esquema:**

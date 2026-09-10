@@ -182,7 +182,17 @@ def build_evidence(analysis: list[dict], posts_by_id: dict[str, dict], por_candi
 
 def _keys_match(key_redes: str, key_csv: str) -> bool:
     """Considera que dos claves canónicas refieren al mismo candidato si una
-    es subconjunto de palabras de la otra (permite alias de apellido solo)."""
+    es subconjunto de palabras de la otra (permite alias de apellido solo).
+
+    Nota de diseño: la AGREGACIÓN usa canonical_key estricto (igualdad exacta)
+    para nunca fusionar personas distintas; la COMPARACIÓN usa este subset para
+    reconciliar nombres tersos escritos a mano en el CSV contra nombres canónicos
+    completos que devuelve Gemini. No "arreglar" esto a igualdad estricta.
+    """
+    # Guarda contra claves vacías: set("".split()) == set() es subconjunto de
+    # cualquier conjunto, lo que haría que un nombre vacío matchee a todo el mundo.
+    if not key_redes or not key_csv:
+        return key_redes == key_csv
     if key_redes == key_csv:
         return True
     words_redes = set(key_redes.split())
@@ -209,11 +219,20 @@ def compare_vs_pollsters(candidatos: list[dict], pollster_rows: list[dict]) -> t
     for c in candidatos:
         key = canonical_key(c["nombre"])
         # Recopilar consultoras que hacen match (exacto o alias de palabras).
+        # Si dos CSV keys distintas matchean el mismo candidato de redes y
+        # ambas tienen datos de la MISMA consultora, promediamos (no pisamos)
+        # para evitar perder un valor en colisiones de alias multi-match.
         consultoras_pct: dict[str, float] = {}
         for csv_key, por_cons in por_candidato.items():
             if _keys_match(key, csv_key):
                 matched_csv_keys.add(csv_key)
-                consultoras_pct.update(por_cons)
+                for consultora, pct in por_cons.items():
+                    if consultora in consultoras_pct:
+                        consultoras_pct[consultora] = round(
+                            (consultoras_pct[consultora] + pct) / 2, 1
+                        )
+                    else:
+                        consultoras_pct[consultora] = pct
         consultoras = [
             {"consultora": nombre, "pct": pct, "gap": round(c["pct"] - pct, 1)}
             for nombre, pct in sorted(consultoras_pct.items())
@@ -310,7 +329,7 @@ def analyze_posts_electoral(posts_by_id: dict[str, dict]) -> list[dict] | None:
         for c in item.get("candidatos", []) or []:
             nombre = (c.get("nombre") or "").strip()
             postura = (c.get("postura") or "").strip().lower()
-            if not nombre or postura not in POSTURAS_VALIDAS:
+            if not nombre or not canonical_key(nombre) or postura not in POSTURAS_VALIDAS:
                 continue
             try:
                 conf = float(c.get("confianza", 0))

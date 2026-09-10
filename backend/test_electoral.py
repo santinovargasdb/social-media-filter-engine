@@ -191,7 +191,7 @@ def test_run_boca_de_urna_flujo_completo(monkeypatch):
     out = el.run_boca_de_urna(keywords=["elecciones"], networks=["twitter", "instagram"],
                               date=None, country="ar", pollster_csv=csv)
     assert out["meta"]["total_posts"] == 2 and out["meta"]["posts_electorales"] == 2
-    assert el.DISCLAIMER in out["meta"]["disclaimer"]
+    assert out["meta"]["disclaimer"] == el.DISCLAIMER
     assert {c["nombre"] for c in out["candidatos"]} == {"Javier Milei", "Axel Kicillof"}
     assert len(out["evidencia"]) == 2
     milei_comp = next(c for c in out["comparacion"] if el.canonical_key(c["candidato"]) == el.canonical_key("Javier Milei"))
@@ -204,6 +204,48 @@ def test_run_boca_de_urna_cero_posts(monkeypatch):
     out = el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar", pollster_csv="")
     assert out["candidatos"] == [] and out["comparacion"] == []
     assert any("publicaciones" in w.lower() for w in out["meta"]["warnings"])
+
+
+def test_empty_key_no_absorbe_candidatos_csv(monkeypatch):
+    """Regresión: un candidato cuyo nombre normaliza a '' (ej. solo espacios o
+    caracteres combinatorios puros) no debe matchear ningún CSV ni contaminar
+    compare_vs_pollsters; además analyze_posts_electoral debe descartarlo en origen."""
+    import gemini_client as gc
+
+    # Nombre que canonical_key reduce a "" (solo espacios).
+    NOMBRE_VACIO_KEY = "   "
+    assert el.canonical_key(NOMBRE_VACIO_KEY) == ""
+
+    # 1) _keys_match: clave vacía nunca matchea una no vacía (y viceversa).
+    assert not el._keys_match("", "javier milei")
+    assert not el._keys_match("javier milei", "")
+    # Dos vacíos sí se igualan entre sí (corner-case trivial, no produce merge real).
+    assert el._keys_match("", "")
+
+    # 2) compare_vs_pollsters: un candidato de redes con nombre de clave vacía no
+    #    absorbe los datos de consultoras de candidatos reales.
+    candidatos_redes = [
+        {"nombre": "Javier Milei", "pct": 44.0, "pos": 4, "neg": 0, "neu": 0, "menciones": 4},
+        # nombre que canonical_key reduce a ""
+        {"nombre": NOMBRE_VACIO_KEY, "pct": 10.0, "pos": 1, "neg": 0, "neu": 0, "menciones": 1},
+    ]
+    rows = [{"consultora": "Z", "fecha": "2026-08-01", "candidato": "Javier Milei", "porcentaje": 40.0}]
+    comp, warnings = el.compare_vs_pollsters(candidatos_redes, rows)
+    # El candidato de clave vacía no debe tener consultoras (no absorbió a Milei).
+    vacio = next(c for c in comp if el.canonical_key(c["candidato"]) == "")
+    assert vacio["consultoras"] == [] and vacio["promedio_consultoras"] is None
+    # Milei sí debe tener su consultora intacta.
+    milei = next(c for c in comp if el.canonical_key(c["candidato"]) == "javier milei")
+    assert milei["consultoras"][0]["consultora"] == "Z"
+
+    # 3) analyze_posts_electoral: un candidato cuya clave normalizada es '' se descarta.
+    posts_by_id = {"Post_0": {"text": "texto irrelevante", "network": "twitter"}}
+    monkeypatch.setattr(gc, "run_with_rotation", _analysis_fake([
+        {"id": "Post_0", "es_electoral": True, "cita": "",
+         "candidatos": [{"nombre": NOMBRE_VACIO_KEY, "postura": "a_favor", "confianza": 0.9}]},
+    ]))
+    out = el.analyze_posts_electoral(posts_by_id)
+    assert out[0]["candidatos"] == []
 
 
 def test_run_boca_de_urna_upstream_falla_propaga(monkeypatch):
