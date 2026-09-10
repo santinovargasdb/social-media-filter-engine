@@ -93,15 +93,15 @@ def test_aggregate_neto_y_confianza():
         {"id": "Post_1", "es_electoral": True, "cita": "b",
          "candidatos": [{"nombre": "javier  milei", "postura": "a_favor", "confianza": 0.8}]},
         {"id": "Post_2", "es_electoral": True, "cita": "c",
-         "candidatos": [{"nombre": "Milei", "postura": "en_contra", "confianza": 0.7}]},
+         "candidatos": [{"nombre": "Javier Milei", "postura": "en_contra", "confianza": 0.7}]},
         {"id": "Post_3", "es_electoral": True, "cita": "d",
          "candidatos": [{"nombre": "Axel Kicillof", "postura": "a_favor", "confianza": 0.9}]},
         {"id": "Post_4", "es_electoral": True, "cita": "e",
-         "candidatos": [{"nombre": "Milei", "postura": "a_favor", "confianza": 0.2}]},  # baja conf: descartada
+         "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.2}]},  # baja conf: descartada
     ]
     candidatos, baja_conf, fallback = el.aggregate_net_sentiment(analysis)
     assert baja_conf == 1 and fallback is False
-    milei = next(c for c in candidatos if c["nombre"] == "Javier Milei")
+    milei = next(c for c in candidatos if el.canonical_key(c["nombre"]) == el.canonical_key("Javier Milei"))
     assert (milei["pos"], milei["neg"], milei["menciones"]) == (2, 1, 3)  # net = 1
     kici = next(c for c in candidatos if el.canonical_key(c["nombre"]) == el.canonical_key("Axel Kicillof"))
     assert kici["pos"] == 1  # net = 1

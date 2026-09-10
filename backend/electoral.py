@@ -98,8 +98,7 @@ def canonical_key(nombre: str) -> str:
     """Clave de merge: sin acentos, minúsculas, espacios colapsados."""
     s = unicodedata.normalize("NFKD", (nombre or "").strip().lower())
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    tokens = s.split()
-    return tokens[-1] if tokens else ""
+    return " ".join(s.split())
 
 
 def aggregate_net_sentiment(analysis: list[dict]) -> tuple[list[dict], int, bool]:
