@@ -1020,15 +1020,22 @@ Expone la orquestación en la Capa 1 con el mismo estilo de manejo de errores qu
 
 - [ ] **Step 1: Escribir el test que falla** en `backend/test_main_urna.py`.
 
+> **Decisión (resuelta con el usuario):** el `TestClient` de FastAPI requiere `httpx`, que no está instalado y sumaría una dependencia — contra la restricción global. Por eso el endpoint se testea invocando el **coroutine directamente** con `asyncio.run` (stdlib), verificando el valor de retorno y el `HTTPException.status_code`. Cero dependencias nuevas.
+
 ```python
-"""Tests del endpoint /api/boca-de-urna con la orquestación mockeada."""
-from fastapi.testclient import TestClient
+"""Tests del endpoint /api/boca-de-urna: invocan el coroutine directo (sin httpx)."""
+import asyncio
+import pytest
+from fastapi import HTTPException
 import main
 import electoral
 
 
-def _client():
-    return TestClient(main.app)
+def _req(**over):
+    base = {"keywords": ["elecciones"], "networks": ["twitter"], "date": None,
+            "country": "ar", "pollster_csv": ""}
+    base.update(over)
+    return main.BocaDeUrnaRequest(**base)
 
 
 def test_endpoint_ok(monkeypatch):
@@ -1036,37 +1043,32 @@ def test_endpoint_ok(monkeypatch):
                    "evidencia": [], "comparacion": [],
                    "meta": {"total_posts": 6, "posts_electorales": 6, "disclaimer": "x", "warnings": []}}
     monkeypatch.setattr(electoral, "run_boca_de_urna", lambda **kw: payload_out)
-    res = _client().post("/api/boca-de-urna", json={"keywords": ["elecciones"], "networks": ["twitter"],
-                                                    "date": None, "country": "ar", "pollster_csv": ""})
-    assert res.status_code == 200
-    assert res.json()["candidatos"][0]["nombre"] == "Milei"
+    out = asyncio.run(main.boca_de_urna_endpoint(_req()))
+    assert out["candidatos"][0]["nombre"] == "Milei"
 
 
 def test_endpoint_csv_invalido_es_400(monkeypatch):
     def boom(**kw):
         raise ValueError("CSV inválido: faltan columnas ['porcentaje'].")
     monkeypatch.setattr(electoral, "run_boca_de_urna", boom)
-    res = _client().post("/api/boca-de-urna", json={"keywords": ["x"], "networks": ["twitter"],
-                                                    "date": None, "country": "ar", "pollster_csv": "malo"})
-    assert res.status_code == 400
-    assert "CSV" in res.json()["detail"]
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(main.boca_de_urna_endpoint(_req(pollster_csv="malo")))
+    assert ei.value.status_code == 400 and "CSV" in ei.value.detail
 
 
 def test_endpoint_upstream_es_503(monkeypatch):
     def boom(**kw):
         raise electoral.UpstreamUnavailableError("Gemini caído")
     monkeypatch.setattr(electoral, "run_boca_de_urna", boom)
-    res = _client().post("/api/boca-de-urna", json={"keywords": ["x"], "networks": ["twitter"],
-                                                    "date": None, "country": "ar", "pollster_csv": ""})
-    assert res.status_code == 503
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(main.boca_de_urna_endpoint(_req()))
+    assert ei.value.status_code == 503
 ```
 
 - [ ] **Step 2: Correr y verificar que falla.**
 
-Run: `python -m pytest backend/test_main_urna.py -q`
-Expected: FAIL con 404 (endpoint inexistente) en `test_endpoint_ok`.
-
-> Si falta `TestClient`: `pip install httpx` (ya viene con FastAPI/starlette en dev). Está en `requirements-dev.txt` o instalable sin sumar deps de runtime.
+Run (desde `backend/`): `./.venv/Scripts/python.exe -m pytest test_main_urna.py -q`
+Expected: FAIL con `AttributeError: module 'main' has no attribute 'boca_de_urna_endpoint'` (y `BocaDeUrnaRequest`).
 
 - [ ] **Step 3: Implementar en `backend/main.py`.**
 
