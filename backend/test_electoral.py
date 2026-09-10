@@ -5,7 +5,7 @@ import pytest
 CSV_OK = (
     "consultora,fecha,candidato,porcentaje\n"
     "Consultora X,2026-08-01,Javier Milei,42.5\n"
-    "Consultora X,2026-08-01,Axel Kicillof,38,0\n"   # coma decimal
+    "Consultora X,2026-08-01,Axel Kicillof,38.0\n"
     "Consultora Y,2026-08-15,Javier Milei,40.1\n"
 )
 
@@ -27,6 +27,10 @@ def test_parse_csv_saltea_filas_invalidas_con_warning():
     rows, warnings = el.parse_pollster_csv(csv)
     assert len(rows) == 1 and rows[0]["consultora"] == "Buena"
     assert len(warnings) == 2
+
+
+def test_parse_pct_comma_decimal():
+    assert el._parse_pct("42,5") == 42.5
 
 
 def test_parse_csv_header_invalido_es_error():
