@@ -19,6 +19,18 @@ from urllib.parse import quote
 import requests
 
 from fetcher import search_serpapi, SUPPORTED_NETWORKS
+from gemini_client import (
+    GEMINI_MODELS,
+    GEMINI_RETRY_STATUSES,
+    generate_raw,
+    run_cascade,
+    run_with_rotation,
+)
+
+# Alias de compat: _run_translation_cascade (abajo) llama a _gemini_generate por
+# nombre de módulo, y sus tests parchean normalizer._gemini_generate. Mantener el
+# alias preserva ese punto de parcheo sin duplicar la función.
+_gemini_generate = generate_raw
 
 
 class UpstreamUnavailableError(Exception):
@@ -37,18 +49,6 @@ _NETWORK_PROMPT_LABEL = {
     "tiktok": "TikTok",
 }
 
-# ── Gemini: modelos en cascada y límite por red ───────────────────────────────
-# Si el primer modelo devuelve 429 (rate limit), 503 (saturación) o 404
-# (modelo no disponible en esta key/región), se reintenta con el siguiente.
-# Cada modelo Flash tiene cuotas independientes, así que el fallback ayuda
-# cuando un modelo se queda sin créditos diarios.
-GEMINI_MODELS = (
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",  # antes 'gemini-flash-latest' -> daba 404 en la API
-)
-GEMINI_RETRY_STATUSES = (429, 503, 404)
 # Tope de resultados por red que se mandan a Gemini para reducir tokens
 # y bajar la chance de tocar el rate limit con multi-red activo.
 GEMINI_MAX_PER_NETWORK = 8
@@ -252,88 +252,6 @@ def _find_matched_terms(text: str, keywords: list[str]) -> list[str]:
     return seen
 
 
-def _gemini_generate(model: str, api_key: str, prompt: str, timeout: int = 45) -> tuple[str | None, int | None]:
-    """
-    Llamada cruda a un modelo Gemini. Devuelve (texto_crudo_sin_fences, http_status_si_error).
-    Helper de bajo nivel compartido por el scoring (_call_gemini_model) y por la
-    Capa de Traducción Automática (_run_translation_cascade): ambos hacen la misma
-    request y solo difieren en cómo parsean la respuesta.
-    - (texto, None): éxito (ya sin ```json``` fences)
-    - (None, status): error HTTP con status code (puede disparar fallback de modelo)
-    - (None, None): error de otro tipo (red) — no tiene sentido el fallback de modelo
-    """
-    # v1beta expone todos los modelos flash/lite actuales; v1 devolvía 404 en
-    # algunos alias (p. ej. gemini-flash-latest), rompiendo la cascada de fallback.
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    headers = {
-        "Content-Type": "application/json",
-        "x-goog-api-key": api_key,
-    }
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
-        response.raise_for_status()
-        res_data = response.json()
-        raw = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        return raw, None
-    except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if e.response is not None else None
-        body_msg = ""
-        if e.response is not None:
-            try:
-                body = e.response.json()
-                body_msg = body.get("error", {}).get("message", "") or str(body)[:200]
-            except Exception:
-                body_msg = (e.response.text or "")[:200]
-        print(f"ERROR Gemini[{model}]: HTTP {status} — {body_msg}")
-        return None, status
-    except Exception as e:
-        print(f"ERROR Gemini[{model}]: {e}")
-        return None, None
-
-
-def _call_gemini_model(model: str, api_key: str, prompt: str) -> tuple[list | None, int | None]:
-    """
-    Llama a un modelo Gemini para SCORING. Devuelve (lista_scored, http_status_si_error).
-    - (lista, None): éxito
-    - (None, status): error HTTP con status code (puede disparar fallback)
-    - (None, None): error de otro tipo (red, parseo) — no tiene sentido fallback de modelo
-    """
-    raw, status = _gemini_generate(model, api_key, prompt, timeout=45)
-    if raw is None:
-        return None, status
-    try:
-        scored = json.loads(raw)
-    except Exception as e:
-        print(f"ERROR Gemini[{model}]: parseo JSON falló — {e}")
-        return None, None
-    if not isinstance(scored, list):
-        print(f"ERROR Gemini[{model}]: respuesta no es lista JSON")
-        return None, None
-    return scored, None
-
-
-def _run_gemini_cascade(prompt: str, api_key: str) -> tuple[list | None, int | None]:
-    """Recorre la cascada GEMINI_MODELS con UNA api_key. Devuelve (scored, last_status):
-    el primer modelo que responde OK gana; solo se prueba el siguiente si el anterior
-    dio 429/503/404. `last_status` queda con el código del último error (para que el
-    caller decida si rota a la API Key secundaria)."""
-    scored: list | None = None
-    status: int | None = None
-    for idx, model in enumerate(GEMINI_MODELS):
-        scored, status = _call_gemini_model(model, api_key, prompt)
-        if scored is not None:
-            if idx > 0:
-                print(f"DEBUG Gemini: fallback EXITOSO con {model}")
-            return scored, status
-        if status not in GEMINI_RETRY_STATUSES:
-            return None, status
-        if idx + 1 < len(GEMINI_MODELS):
-            print(f"DEBUG Gemini: HTTP {status} en {model}, probando fallback {GEMINI_MODELS[idx + 1]}")
-    return None, status
-
-
 # ── Capa de Traducción Automática (búsquedas internacionales) ─────────────────
 # Cuando el país de búsqueda NO es hispanohablante (Japón, Alemania, Rusia, etc.),
 # las keywords en español jamás matchean contenido nativo: el monitor devolvía
@@ -472,11 +390,6 @@ def _process_with_gemini(
     Cascada de modelos GEMINI_MODELS con fallback en 429/503, y rotación a la API
     Key secundaria (GEMINI_API_KEY_SECONDARY) si la cuota principal se agota.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        print("ERROR: GEMINI_API_KEY no configurada.")
-        return None
-
     # El tope por red ya se aplicó en fetch_posts antes de mergear; acá usamos
     # el lote combinado tal cual.
     resultados_limitados = resultados
@@ -584,23 +497,8 @@ Devolvé ÚNICAMENTE un JSON válido (sin texto adicional ni bloques de código)
 Publicaciones a evaluar:
 {resultados_text}"""
 
-    # Cascada de modelos con la API Key PRINCIPAL: el primero que responda OK gana.
-    scored, status = _run_gemini_cascade(prompt, api_key)
-
-    # Fase E · Contingencia: si la cuota principal se agotó (429 rate limit / 503
-    # saturación) y quedó sin resultado, rotamos a la API Key SECUNDARIA y
-    # reintentamos el MISMO batch al toque. El contrato JSON de salida no cambia:
-    # `scored` sigue siendo la lista de {id, score, texto, razon} que mapeamos abajo.
-    if scored is None and status in (429, 503):
-        secondary_key = os.getenv("GEMINI_API_KEY_SECONDARY", "")
-        if secondary_key:
-            print("Cuota principal agotada. Rotando a la API de SMATA...")
-            scored, status = _run_gemini_cascade(prompt, secondary_key)
-            if scored is not None:
-                print("DEBUG Gemini: rotación a API secundaria EXITOSA.")
-        else:
-            print("DEBUG Gemini: cuota principal agotada y GEMINI_API_KEY_SECONDARY no configurada — sin rotación.")
-
+    # Transporte compartido: cascada de modelos + rotación a la key secundaria.
+    scored, status = run_with_rotation(prompt)
     if scored is None:
         return None
 

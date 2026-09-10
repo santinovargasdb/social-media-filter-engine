@@ -8,6 +8,7 @@ sola llamada a Gemini. Las llamadas a Gemini se mockean: no se pega a la red.
 Correr desde backend/:  python -m pytest -q
 """
 import normalizer as nz
+import gemini_client as gc
 
 
 # ── _is_specific_post_url ─────────────────────────────────────────────────────
@@ -124,7 +125,7 @@ def test_process_una_sola_llamada_para_todas_las_redes(monkeypatch):
             {"id": "Post_2", "score": 75, "razon": "x"},
         ], None)
 
-    monkeypatch.setattr(nz, "_call_gemini_model", fake)
+    monkeypatch.setattr(gc, "call_gemini_json", fake)
     serp = [
         {"title": "t", "snippet": "smata", "url": "https://x.com/u/status/1", "date": "", "network": "twitter"},
         {"title": "t", "snippet": "smata", "url": "https://www.instagram.com/u/p/AAA/", "date": "", "network": "instagram"},
@@ -142,7 +143,7 @@ def test_process_una_sola_llamada_para_todas_las_redes(monkeypatch):
 
 def test_process_descarta_bajo_el_piso(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test")
-    monkeypatch.setattr(nz, "_call_gemini_model",
+    monkeypatch.setattr(gc, "call_gemini_json",
                         _fake_scored([{"id": "Post_0", "score": 40, "razon": "x"}]))
     serp = [{"title": "", "snippet": "x", "url": "https://www.tiktok.com/@u/video/9", "date": "", "network": "tiktok"}]
     # En amplio el piso de TikTok es 50 -> 40 se descarta.
@@ -151,7 +152,7 @@ def test_process_descarta_bajo_el_piso(monkeypatch):
 
 def test_process_tiktok_sin_deeplink_cae_al_fallback(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test")
-    monkeypatch.setattr(nz, "_call_gemini_model",
+    monkeypatch.setattr(gc, "call_gemini_json",
                         _fake_scored([{"id": "Post_0", "score": 90, "razon": "x"}]))
     serp = [{"title": "", "snippet": "Trabajadores de SMATA reclaman en la planta", "url": "https://www.tiktok.com/@creador", "date": "", "network": "tiktok"}]
     posts = nz._process_with_gemini(serp, "smata", smata_mode=False, keywords=[])
@@ -179,7 +180,7 @@ def test_is_tiktok_garbage_respeta_contenido_real():
 def test_process_purga_basura_tiktok(monkeypatch):
     """Un TikTok con snippet basura (solo música) se destruye aunque Gemini lo puntúe alto."""
     monkeypatch.setenv("GEMINI_API_KEY", "test")
-    monkeypatch.setattr(nz, "_call_gemini_model", _fake_scored([
+    monkeypatch.setattr(gc, "call_gemini_json", _fake_scored([
         {"id": "Post_0", "score": 95, "razon": "x"},
         {"id": "Post_1", "score": 95, "razon": "x"},
     ]))
@@ -197,7 +198,7 @@ def test_process_mapea_por_id_y_respeta_url_original(monkeypatch):
     """Gemini responde fuera de orden y con un id inexistente; el backend mapea
     por id, ignora el id basura y NUNCA toma la URL de la respuesta de Gemini."""
     monkeypatch.setenv("GEMINI_API_KEY", "test")
-    monkeypatch.setattr(nz, "_call_gemini_model", _fake_scored([
+    monkeypatch.setattr(gc, "call_gemini_json", _fake_scored([
         {"id": "Post_1", "score": 88, "razon": "x"},              # fuera de orden
         {"id": "Post_999", "score": 100, "razon": "inventado"},   # id que no enviamos
         {"id": "Post_0", "score": 70, "razon": "x"},
@@ -238,7 +239,7 @@ def test_process_rota_a_secundaria_en_429(monkeypatch):
             return (None, 429)  # cuota agotada en todos los modelos
         return ([{"id": "Post_0", "score": 90, "razon": "x"}], None)
 
-    monkeypatch.setattr(nz, "_call_gemini_model", fake)
+    monkeypatch.setattr(gc, "call_gemini_json", fake)
     posts = nz._process_with_gemini(_SERP_OK, "smata", smata_mode=False, keywords=[])
     assert posts and posts[0]["relevance_score"] == 90
     assert "primary" in keys_usadas and "secondary" in keys_usadas  # rotó
@@ -253,7 +254,7 @@ def test_process_rota_tambien_en_503(monkeypatch):
             return (None, 503)
         return ([{"id": "Post_0", "score": 80, "razon": "x"}], None)
 
-    monkeypatch.setattr(nz, "_call_gemini_model", fake)
+    monkeypatch.setattr(gc, "call_gemini_json", fake)
     posts = nz._process_with_gemini(_SERP_OK, "smata", smata_mode=False, keywords=[])
     assert posts and posts[0]["relevance_score"] == 80
 
@@ -262,7 +263,7 @@ def test_process_sin_secundaria_no_rota(monkeypatch):
     """Sin GEMINI_API_KEY_SECONDARY, una cuota agotada devuelve None (sin romper)."""
     monkeypatch.setenv("GEMINI_API_KEY", "primary")
     monkeypatch.delenv("GEMINI_API_KEY_SECONDARY", raising=False)
-    monkeypatch.setattr(nz, "_call_gemini_model", lambda m, k, p: (None, 429))
+    monkeypatch.setattr(gc, "call_gemini_json", lambda m, k, p: (None, 429))
     assert nz._process_with_gemini(_SERP_OK, "smata", smata_mode=False, keywords=[]) is None
 
 
@@ -276,7 +277,7 @@ def test_process_no_rota_si_error_no_es_cuota(monkeypatch):
         keys_usadas.append(api_key)
         return (None, None)  # error de red/parseo, no cuota
 
-    monkeypatch.setattr(nz, "_call_gemini_model", fake)
+    monkeypatch.setattr(gc, "call_gemini_json", fake)
     assert nz._process_with_gemini(_SERP_OK, "smata", smata_mode=False, keywords=[]) is None
     assert "secondary" not in keys_usadas  # NO rotó
 
@@ -432,7 +433,7 @@ def test_prompt_bifurca_estricto_vs_amplio(monkeypatch):
         capturado["p"] = prompt
         return ([], None)
 
-    monkeypatch.setattr(nz, "_call_gemini_model", fake)
+    monkeypatch.setattr(gc, "call_gemini_json", fake)
     serp = [{"title": "", "snippet": "x", "url": "https://x.com/u/status/1", "date": "", "network": "twitter"}]
 
     nz._process_with_gemini(serp, "salud", smata_mode=True, keywords=[])
@@ -450,7 +451,7 @@ def test_prompt_blindado_ids_y_aislamiento(monkeypatch):
         capturado["p"] = prompt
         return ([], None)
 
-    monkeypatch.setattr(nz, "_call_gemini_model", fake)
+    monkeypatch.setattr(gc, "call_gemini_json", fake)
     serp = [
         {"title": "", "snippet": "a", "url": "https://x.com/u/status/1", "date": "", "network": "twitter"},
         {"title": "", "snippet": "b", "url": "https://x.com/u/status/2", "date": "", "network": "twitter"},
