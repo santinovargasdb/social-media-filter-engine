@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import ThemeToggle from "@/components/ThemeToggle";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Monitor de Medios SMATA",
@@ -51,6 +52,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <nav style={{ display: "flex", gap: "8px" }}>
+              <Link href="/" style={{ fontSize: "12px", color: "rgba(255,255,255,0.85)", textDecoration: "none",
+                padding: "4px 10px", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.15)" }}>
+                Monitor
+              </Link>
+              <Link href="/boca-de-urna" style={{ fontSize: "12px", color: "rgba(255,255,255,0.85)", textDecoration: "none",
+                padding: "4px 10px", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.15)" }}>
+                Boca de Urna
+              </Link>
+            </nav>
             <div style={{
               fontSize: "12px", color: "rgba(255,255,255,0.75)", fontWeight: 500,
               padding: "4px 12px", borderRadius: "20px",
