@@ -15,6 +15,15 @@ import json
 import unicodedata
 
 import gemini_client
+import normalizer
+from normalizer import UpstreamUnavailableError  # reexport para el endpoint
+
+DISCLAIMER = (
+    "Este indicador refleja el clima de conversación en redes sociales sobre "
+    "publicaciones públicas indexadas. No es una muestra representativa del "
+    "electorado ni una proyección de resultado electoral. Sirve como termómetro "
+    "direccional, complementario a las encuestas de consultoras."
+)
 
 CONF_MIN = 0.5
 POSTURAS_VALIDAS = ("a_favor", "en_contra", "neutro")
@@ -225,6 +234,57 @@ def compare_vs_pollsters(candidatos: list[dict], pollster_rows: list[dict]) -> t
             nombre = next(r["candidato"] for r in pollster_rows if canonical_key(r["candidato"]) == cand_key)
             warnings.append(f"'{nombre}' aparece en el CSV de consultoras pero no se detectó en redes.")
     return comparacion, warnings
+
+
+def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
+                     country: str, pollster_csv: str) -> dict:
+    """Orquesta la boca de urna. Reusa normalizer.fetch_posts para el corpus,
+    corre el análisis electoral y arma el payload. Lanza UpstreamUnavailableError
+    (Gemini/SerpAPI caído) o ValueError (CSV con header inválido)."""
+    # 1) CSV primero: si el header es inválido, cortamos con ValueError (-> 400).
+    pollster_rows, csv_warnings = parse_pollster_csv(pollster_csv)
+
+    # 2) Corpus: reuso del fetch del monitor en modo amplio (no SMATA).
+    termino = " ".join([k for k in keywords if k and k.strip()]).strip() or "elecciones presidenciales"
+    posts = normalizer.fetch_posts(
+        termino=termino, fecha_desde=date, smata_mode=False,
+        keywords=keywords, accounts=[], networks=networks, country=country,
+    )
+
+    warnings = list(csv_warnings)
+    if not posts:
+        warnings.append("No se encontraron publicaciones para el término buscado.")
+        return {"candidatos": [], "evidencia": [], "comparacion": [],
+                "meta": {"total_posts": 0, "posts_electorales": 0,
+                         "disclaimer": DISCLAIMER, "warnings": warnings}}
+
+    # 3) Análisis electoral (ids estables Post_i).
+    posts_by_id = {f"Post_{i}": p for i, p in enumerate(posts)}
+    analysis = analyze_posts_electoral(posts_by_id)
+    if analysis is None:
+        raise UpstreamUnavailableError(
+            "Gemini no está disponible (cuota agotada o servicio caído). Reintentá en unos minutos.")
+
+    posts_electorales = sum(1 for a in analysis if a.get("es_electoral") and a.get("candidatos"))
+
+    # 4) Agregación + evidencia + comparación.
+    candidatos, baja_conf, fallback_vol = aggregate_net_sentiment(analysis)
+    evidencia = build_evidence(analysis, posts_by_id)
+    comparacion, comp_warnings = compare_vs_pollsters(candidatos, pollster_rows)
+    warnings.extend(comp_warnings)
+
+    if not candidatos:
+        warnings.append("No se detectaron candidatos en las publicaciones analizadas.")
+    if fallback_vol and candidatos:
+        warnings.append("Sentimiento neto no discriminó (todos ≤ 0): el % se calculó por volumen de menciones.")
+    if baja_conf:
+        warnings.append(f"{baja_conf} mención(es) descartada(s) por baja confianza (< {CONF_MIN}).")
+
+    return {
+        "candidatos": candidatos, "evidencia": evidencia, "comparacion": comparacion,
+        "meta": {"total_posts": len(posts), "posts_electorales": posts_electorales,
+                 "disclaimer": DISCLAIMER, "warnings": warnings},
+    }
 
 
 def analyze_posts_electoral(posts_by_id: dict[str, dict]) -> list[dict] | None:

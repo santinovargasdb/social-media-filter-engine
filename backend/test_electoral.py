@@ -166,3 +166,51 @@ def test_compare_sin_csv_devuelve_solo_redes():
     candidatos = [{"nombre": "Milei", "pct": 100.0, "pos": 0, "neg": 0, "neu": 0, "menciones": 0}]
     comp, warnings = el.compare_vs_pollsters(candidatos, [])
     assert comp[0]["consultoras"] == [] and warnings == []
+
+
+def test_run_boca_de_urna_flujo_completo(monkeypatch):
+    import normalizer, gemini_client as gc
+    posts = [
+        {"id": "1", "network": "twitter", "author": "a", "author_url": "", "text": "Milei la rompe",
+         "date": "", "post_url": "u1", "relevance_score": 80, "relevance_level": "alta",
+         "matched_terms": [], "video_url": None},
+        {"id": "2", "network": "instagram", "author": "b", "author_url": "", "text": "Kicillof presidente",
+         "date": "", "post_url": "u2", "relevance_score": 70, "relevance_level": "alta",
+         "matched_terms": [], "video_url": None},
+    ]
+    monkeypatch.setattr(normalizer, "fetch_posts", lambda **kw: posts)
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
+        {"id": "Post_0", "es_electoral": True, "cita": "Milei la rompe",
+         "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]},
+        {"id": "Post_1", "es_electoral": True, "cita": "Kicillof presidente",
+         "candidatos": [{"nombre": "Axel Kicillof", "postura": "a_favor", "confianza": 0.9}]},
+    ], None))
+
+    csv = ("consultora,fecha,candidato,porcentaje\n"
+           "X,2026-08-01,Javier Milei,48\n")
+    out = el.run_boca_de_urna(keywords=["elecciones"], networks=["twitter", "instagram"],
+                              date=None, country="ar", pollster_csv=csv)
+    assert out["meta"]["total_posts"] == 2 and out["meta"]["posts_electorales"] == 2
+    assert el.DISCLAIMER in out["meta"]["disclaimer"]
+    assert {c["nombre"] for c in out["candidatos"]} == {"Javier Milei", "Axel Kicillof"}
+    assert len(out["evidencia"]) == 2
+    milei_comp = next(c for c in out["comparacion"] if el.canonical_key(c["candidato"]) == el.canonical_key("Javier Milei"))
+    assert milei_comp["consultoras"][0]["consultora"] == "X"
+
+
+def test_run_boca_de_urna_cero_posts(monkeypatch):
+    import normalizer
+    monkeypatch.setattr(normalizer, "fetch_posts", lambda **kw: [])
+    out = el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar", pollster_csv="")
+    assert out["candidatos"] == [] and out["comparacion"] == []
+    assert any("publicaciones" in w.lower() for w in out["meta"]["warnings"])
+
+
+def test_run_boca_de_urna_upstream_falla_propaga(monkeypatch):
+    import normalizer, gemini_client as gc
+    posts = [{"id": "1", "network": "twitter", "author": "", "author_url": "", "text": "x", "date": "",
+              "post_url": "u", "relevance_score": 50, "relevance_level": "media", "matched_terms": [], "video_url": None}]
+    monkeypatch.setattr(normalizer, "fetch_posts", lambda **kw: posts)
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: (None, 503))
+    with pytest.raises(el.UpstreamUnavailableError):
+        el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar", pollster_csv="")
