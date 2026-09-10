@@ -1,5 +1,6 @@
 # Root .gitignore
 node_modules/
+.superpowers/
 .next/
 .env
 __pycache__/
