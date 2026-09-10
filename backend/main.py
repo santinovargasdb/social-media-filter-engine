@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import List, Literal, Optional
 from normalizer import fetch_posts, UpstreamUnavailableError
 from docx_generator import generate_docx
+import electoral
 import datetime
 import io
 import os
@@ -125,6 +126,37 @@ async def search_endpoint(request: SearchRequest):
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         print(f"Error interno: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class BocaDeUrnaRequest(BaseModel):
+    keywords: List[str] = []
+    networks: List[str] = []
+    date: Optional[str] = None
+    country: str = "ar"
+    pollster_csv: str = ""
+
+
+@app.post("/api/boca-de-urna")
+async def boca_de_urna_endpoint(request: BocaDeUrnaRequest):
+    try:
+        return electoral.run_boca_de_urna(
+            keywords=request.keywords,
+            networks=request.networks,
+            date=request.date,
+            country=(request.country or "ar").strip().lower(),
+            pollster_csv=request.pollster_csv,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        # CSV con header inválido u otro dato inutilizable del usuario.
+        raise HTTPException(status_code=400, detail=str(e))
+    except electoral.UpstreamUnavailableError as e:
+        print(f"Upstream no disponible (boca de urna): {e}")
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        print(f"Error interno (boca de urna): {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
