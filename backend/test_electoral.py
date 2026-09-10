@@ -79,3 +79,61 @@ def test_analyze_ids_inventados_se_ignoran(monkeypatch):
                         _analysis_fake([{"id": "Post_999", "candidatos": [], "cita": "", "es_electoral": False}]))
     out = el.analyze_posts_electoral({"Post_0": {"text": "x", "network": "twitter"}})
     assert out == []  # el id inventado no matchea ningún post
+
+
+def test_canonical_key_unifica_acentos_y_may():
+    assert el.canonical_key("Sergio Massa") == el.canonical_key("  sergio  massa ")
+    assert el.canonical_key("Patricia Bullrich") == el.canonical_key("PATRICIA BULLRICH")
+
+
+def test_aggregate_neto_y_confianza():
+    analysis = [
+        {"id": "Post_0", "es_electoral": True, "cita": "a",
+         "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]},
+        {"id": "Post_1", "es_electoral": True, "cita": "b",
+         "candidatos": [{"nombre": "javier  milei", "postura": "a_favor", "confianza": 0.8}]},
+        {"id": "Post_2", "es_electoral": True, "cita": "c",
+         "candidatos": [{"nombre": "Milei", "postura": "en_contra", "confianza": 0.7}]},
+        {"id": "Post_3", "es_electoral": True, "cita": "d",
+         "candidatos": [{"nombre": "Axel Kicillof", "postura": "a_favor", "confianza": 0.9}]},
+        {"id": "Post_4", "es_electoral": True, "cita": "e",
+         "candidatos": [{"nombre": "Milei", "postura": "a_favor", "confianza": 0.2}]},  # baja conf: descartada
+    ]
+    candidatos, baja_conf, fallback = el.aggregate_net_sentiment(analysis)
+    assert baja_conf == 1 and fallback is False
+    milei = next(c for c in candidatos if c["nombre"] == "Javier Milei")
+    assert (milei["pos"], milei["neg"], milei["menciones"]) == (2, 1, 3)  # net = 1
+    kici = next(c for c in candidatos if el.canonical_key(c["nombre"]) == el.canonical_key("Axel Kicillof"))
+    assert kici["pos"] == 1  # net = 1
+    # net Milei = 1, net Kicillof = 1 -> 50/50
+    assert milei["pct"] == 50.0 and kici["pct"] == 50.0
+    assert candidatos == sorted(candidatos, key=lambda c: c["pct"], reverse=True)
+
+
+def test_aggregate_fallback_a_volumen_si_todos_negativos():
+    analysis = [
+        {"id": "Post_0", "candidatos": [{"nombre": "A", "postura": "en_contra", "confianza": 0.9}], "cita": ""},
+        {"id": "Post_1", "candidatos": [{"nombre": "A", "postura": "en_contra", "confianza": 0.9}], "cita": ""},
+        {"id": "Post_2", "candidatos": [{"nombre": "B", "postura": "en_contra", "confianza": 0.9}], "cita": ""},
+    ]
+    candidatos, _bc, fallback = el.aggregate_net_sentiment(analysis)
+    assert fallback is True
+    a = next(c for c in candidatos if c["nombre"] == "A")
+    assert a["pct"] == 66.7  # 2 de 3 menciones
+
+
+def test_build_evidence_ordena_por_confianza_y_adjunta_post():
+    analysis = [
+        {"id": "Post_0", "cita": "cita floja",
+         "candidatos": [{"nombre": "Milei", "postura": "a_favor", "confianza": 0.6}]},
+        {"id": "Post_1", "cita": "cita fuerte",
+         "candidatos": [{"nombre": "Milei", "postura": "a_favor", "confianza": 0.95}]},
+    ]
+    posts_by_id = {
+        "Post_0": {"text": "t0", "network": "twitter", "post_url": "u0", "author": "a0", "author_url": "", "date": ""},
+        "Post_1": {"text": "t1", "network": "tiktok", "post_url": "u1", "author": "a1", "author_url": "", "date": ""},
+    }
+    ev = el.build_evidence(analysis, posts_by_id)
+    assert ev[0]["cita"] == "cita fuerte"  # mayor confianza primero
+    assert ev[0]["post"]["post_url"] == "u1"
+    assert ev[0]["candidato"] == "Milei"

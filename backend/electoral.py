@@ -94,6 +94,84 @@ Publicaciones a evaluar:
 {items_text}"""
 
 
+def canonical_key(nombre: str) -> str:
+    """Clave de merge: sin acentos, minúsculas, espacios colapsados."""
+    s = unicodedata.normalize("NFKD", (nombre or "").strip().lower())
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    tokens = s.split()
+    return tokens[-1] if tokens else ""
+
+
+def aggregate_net_sentiment(analysis: list[dict]) -> tuple[list[dict], int, bool]:
+    """Agrega por candidato en sentimiento neto. Devuelve (candidatos, baja_confianza, fallback_volumen)."""
+    acc: dict[str, dict] = {}
+    baja_confianza = 0
+    for item in analysis:
+        for c in item.get("candidatos", []) or []:
+            if c.get("confianza", 0) < CONF_MIN:
+                baja_confianza += 1
+                continue
+            key = canonical_key(c["nombre"])
+            entry = acc.setdefault(key, {"nombre": c["nombre"], "pos": 0, "neg": 0, "neu": 0, "menciones": 0})
+            entry["menciones"] += 1
+            if c["postura"] == "a_favor":
+                entry["pos"] += 1
+            elif c["postura"] == "en_contra":
+                entry["neg"] += 1
+            else:
+                entry["neu"] += 1
+
+    entries = list(acc.values())
+    for e in entries:
+        e["net"] = e["pos"] - e["neg"]
+    suma_neto = sum(max(e["net"], 0) for e in entries)
+    fallback_volumen = suma_neto <= 0
+    suma_menciones = sum(e["menciones"] for e in entries)
+
+    candidatos: list[dict] = []
+    for e in entries:
+        if fallback_volumen:
+            pct = (e["menciones"] / suma_menciones * 100) if suma_menciones else 0.0
+        else:
+            pct = (max(e["net"], 0) / suma_neto * 100)
+        candidatos.append({
+            "nombre": e["nombre"], "pct": round(pct, 1),
+            "pos": e["pos"], "neg": e["neg"], "neu": e["neu"], "menciones": e["menciones"],
+        })
+    candidatos.sort(key=lambda c: c["pct"], reverse=True)
+    return candidatos, baja_confianza, fallback_volumen
+
+
+def build_evidence(analysis: list[dict], posts_by_id: dict[str, dict], por_candidato: int = 5) -> list[dict]:
+    """Empareja cada mención (conf >= CONF_MIN) con su post + cita, ordenada por
+    confianza desc, capando a `por_candidato` citas por candidato."""
+    _POST_FIELDS = ("network", "author", "author_url", "text", "post_url", "date")
+    filas: list[tuple[float, dict]] = []
+    for item in analysis:
+        src = posts_by_id.get(item.get("id", ""))
+        if src is None:
+            continue
+        post_subset = {k: src.get(k, "") for k in _POST_FIELDS}
+        for c in item.get("candidatos", []) or []:
+            if c.get("confianza", 0) < CONF_MIN:
+                continue
+            filas.append((c["confianza"], {
+                "candidato": c["nombre"], "postura": c["postura"],
+                "cita": item.get("cita", "") or (src.get("text", "") or ""),
+                "post": post_subset,
+            }))
+    filas.sort(key=lambda t: t[0], reverse=True)
+    vistos: dict[str, int] = {}
+    evidencia: list[dict] = []
+    for _conf, fila in filas:
+        key = canonical_key(fila["candidato"])
+        if vistos.get(key, 0) >= por_candidato:
+            continue
+        vistos[key] = vistos.get(key, 0) + 1
+        evidencia.append(fila)
+    return evidencia
+
+
 def analyze_posts_electoral(posts_by_id: dict[str, dict]) -> list[dict] | None:
     """Clasifica cada post (candidato + postura + confianza) vía Gemini. Devuelve
     el mirror saneado por id, o None si el transporte falló (upstream)."""
