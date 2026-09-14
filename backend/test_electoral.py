@@ -101,27 +101,29 @@ def test_aggregate_neto_y_confianza():
         {"id": "Post_4", "es_electoral": True, "cita": "e",
          "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.2}]},  # baja conf: descartada
     ]
-    candidatos, baja_conf, fallback = el.aggregate_net_sentiment(analysis)
-    assert baja_conf == 1 and fallback is False
+    candidatos, baja_conf = el.aggregate_net_sentiment(analysis)
+    assert baja_conf == 1
     milei = next(c for c in candidatos if el.canonical_key(c["nombre"]) == el.canonical_key("Javier Milei"))
-    assert (milei["pos"], milei["neg"], milei["menciones"]) == (2, 1, 3)  # net = 1
+    assert (milei["pos"], milei["neg"], milei["menciones"]) == (2, 1, 3)  # sentimiento se conserva
     kici = next(c for c in candidatos if el.canonical_key(c["nombre"]) == el.canonical_key("Axel Kicillof"))
-    assert kici["pos"] == 1  # net = 1
-    # net Milei = 1, net Kicillof = 1 -> 50/50
-    assert milei["pct"] == 50.0 and kici["pct"] == 50.0
+    assert kici["pos"] == 1
+    # pct = share de menciones: Milei 3 de 4 (75%), Kicillof 1 de 4 (25%).
+    assert milei["pct"] == 75.0 and kici["pct"] == 25.0
     assert candidatos == sorted(candidatos, key=lambda c: c["pct"], reverse=True)
 
 
-def test_aggregate_fallback_a_volumen_si_todos_negativos():
+def test_aggregate_pct_es_share_de_menciones():
+    """pct siempre es volumen de menciones, sin importar el sentimiento (así todos
+    los candidatos detectados aparecen; antes colapsaba a uno con sentimiento neto)."""
     analysis = [
         {"id": "Post_0", "candidatos": [{"nombre": "A", "postura": "en_contra", "confianza": 0.9}], "cita": ""},
         {"id": "Post_1", "candidatos": [{"nombre": "A", "postura": "en_contra", "confianza": 0.9}], "cita": ""},
         {"id": "Post_2", "candidatos": [{"nombre": "B", "postura": "en_contra", "confianza": 0.9}], "cita": ""},
     ]
-    candidatos, _bc, fallback = el.aggregate_net_sentiment(analysis)
-    assert fallback is True
+    candidatos, _bc = el.aggregate_net_sentiment(analysis)
     a = next(c for c in candidatos if c["nombre"] == "A")
-    assert a["pct"] == 66.7  # 2 de 3 menciones
+    b = next(c for c in candidatos if c["nombre"] == "B")
+    assert a["pct"] == 66.7 and b["pct"] == 33.3  # 2/3 y 1/3, aunque todo sea en_contra
 
 
 def test_build_evidence_ordena_por_confianza_y_adjunta_post():
@@ -285,21 +287,27 @@ def test_build_candidate_search_list_une_fijos_y_csv():
 
 
 def test_run_boca_de_urna_busca_por_candidato(monkeypatch):
-    """El corpus se arma con la búsqueda general + una por cada candidato fijo."""
+    """El corpus se arma con la búsqueda general (todas las redes) + una por cada
+    candidato fijo. Las de candidato van SOLO a X para ahorrar cuota de SerpAPI."""
     import normalizer
-    terminos = []
+    llamados = []  # (termino, tuple(redes))
 
     def fake_fetch(**kw):
-        terminos.append(kw["termino"])
+        llamados.append((kw["termino"], tuple(kw["networks"])))
         return [], False
 
     monkeypatch.setattr(normalizer, "fetch_raw_posts", fake_fetch)
-    el.run_boca_de_urna(keywords=["elecciones presidenciales"], networks=["twitter"],
+    el.run_boca_de_urna(keywords=["elecciones presidenciales"],
+                        networks=["twitter", "instagram", "tiktok"],
                         date=None, country="ar", pollster_csv="")
-    assert "elecciones presidenciales" in terminos          # búsqueda general
-    assert any("Javier Milei" in t for t in terminos)        # búsqueda por candidato
+    # La búsqueda general usa TODAS las redes seleccionadas.
+    assert ("elecciones presidenciales", ("twitter", "instagram", "tiktok")) in llamados
+    # Cada búsqueda por candidato usa solo X.
+    por_candidato = [c for c in llamados if c[0] != "elecciones presidenciales"]
+    assert por_candidato and all(nets == ("twitter",) for _term, nets in por_candidato)
+    assert any("Javier Milei" in term for term, _ in por_candidato)
     # general + una por cada candidato fijo (deduplicado por texto).
-    assert len(terminos) == 1 + len(el.CANDIDATOS_DEFAULT)
+    assert len(llamados) == 1 + len(el.CANDIDATOS_DEFAULT)
 
 
 def _fake_rotation_por_contenido(monkeypatch, fail_if_contains_index=None):

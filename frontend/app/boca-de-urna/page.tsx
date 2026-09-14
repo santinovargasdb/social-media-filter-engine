@@ -59,7 +59,7 @@ export default function BocaDeUrnaPage() {
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: "24px", alignItems: "start" }}>
               <section style={{ display: "flex", flexDirection: "column", gap: "20px", minWidth: 0 }}>
                 <div>
-                  <h3 style={{ fontSize: "14px", marginBottom: "10px" }}>Sentimiento neto en redes</h3>
+                  <h3 style={{ fontSize: "14px", marginBottom: "10px" }}>Menciones y sentimiento en redes</h3>
                   <SentimentBarChart candidatos={data.candidatos} />
                 </div>
                 <div>

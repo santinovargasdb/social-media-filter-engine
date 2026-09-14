@@ -66,6 +66,14 @@ FETCH_CONCURRENCY = 4
 # ya maneja 429/503, pero mejor no provocarlos con demasiadas llamadas simultáneas).
 ELECTORAL_BATCH_CONCURRENCY = 2
 
+# Redes para las búsquedas POR CANDIDATO. La opinión electoral vive sobre todo en X,
+# así que las búsquedas por candidato van solo a X para ahorrar cuota de SerpAPI:
+# con 3 redes seleccionadas + 6 candidatos, pasa de ~21 búsquedas a ~9 por análisis.
+# La búsqueda GENERAL sí usa todas las redes seleccionadas por el usuario. Si el
+# usuario no seleccionó X, los candidatos caen a las redes que sí eligió (para no
+# quedarse sin buscarlos).
+CANDIDATE_NETWORKS = ("twitter",)
+
 
 def _parse_pct(raw: str) -> float:
     """Convierte '42,5' o '42.5' a float. Lanza ValueError si no es numérico."""
@@ -147,8 +155,17 @@ def canonical_key(nombre: str) -> str:
     return " ".join(s.split())
 
 
-def aggregate_net_sentiment(analysis: list[dict]) -> tuple[list[dict], int, bool]:
-    """Agrega por candidato en sentimiento neto. Devuelve (candidatos, baja_confianza, fallback_volumen)."""
+def aggregate_net_sentiment(analysis: list[dict]) -> tuple[list[dict], int]:
+    """Agrega las menciones por candidato. `pct` = SHARE DE MENCIONES (volumen de
+    conversación), para que TODOS los candidatos detectados aparezcan proporcional
+    a cuánto se habla de ellos.
+
+    (Antes `pct` era el sentimiento neto a_favor−en_contra: colapsaba a un solo
+    candidato cuando casi todo era neutro —caso típico con posteos-noticia—, que es
+    justo lo que se veía como "un solo candidato". El sentimiento sigue disponible
+    en pos/neg/neu para el desglose por barra del frontend.)
+
+    Devuelve (candidatos, baja_confianza)."""
     acc: dict[str, dict] = {}
     baja_confianza = 0
     for item in analysis:
@@ -167,24 +184,16 @@ def aggregate_net_sentiment(analysis: list[dict]) -> tuple[list[dict], int, bool
                 entry["neu"] += 1
 
     entries = list(acc.values())
-    for e in entries:
-        e["net"] = e["pos"] - e["neg"]
-    suma_neto = sum(max(e["net"], 0) for e in entries)
-    fallback_volumen = suma_neto <= 0
     suma_menciones = sum(e["menciones"] for e in entries)
-
     candidatos: list[dict] = []
     for e in entries:
-        if fallback_volumen:
-            pct = (e["menciones"] / suma_menciones * 100) if suma_menciones else 0.0
-        else:
-            pct = (max(e["net"], 0) / suma_neto * 100)
+        pct = (e["menciones"] / suma_menciones * 100) if suma_menciones else 0.0
         candidatos.append({
             "nombre": e["nombre"], "pct": round(pct, 1),
             "pos": e["pos"], "neg": e["neg"], "neu": e["neu"], "menciones": e["menciones"],
         })
     candidatos.sort(key=lambda c: c["pct"], reverse=True)
-    return candidatos, baja_confianza, fallback_volumen
+    return candidatos, baja_confianza
 
 
 def build_evidence(analysis: list[dict], posts_by_id: dict[str, dict], por_candidato: int = 5) -> list[dict]:
@@ -325,28 +334,33 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
     #    posts para que la búsqueda general no cope el corpus.
     termino = " ".join([k for k in keywords if k and k.strip()]).strip() or "elecciones presidenciales"
     candidatos_buscar = build_candidate_search_list(pollster_rows)
-    search_terms: list[str] = []
+    # Redes por candidato: X si el usuario la seleccionó; si no, las que sí eligió.
+    cand_nets = [n for n in (networks or []) if n in CANDIDATE_NETWORKS] or (networks or [])
+    # search_specs = lista de (término, redes). La general usa todas las redes; cada
+    # candidato usa cand_nets (X) para ahorrar cuota. Dedup por texto de término.
+    search_specs: list[tuple[str, list[str]]] = []
     vistos_terms: set[str] = set()
-    for t in [termino] + [f"{c} {termino}".strip() for c in candidatos_buscar]:
-        k = t.lower()
+    for term, nets in [(termino, networks)] + [(f"{c} {termino}".strip(), cand_nets) for c in candidatos_buscar]:
+        k = term.lower()
         if k and k not in vistos_terms:
             vistos_terms.add(k)
-            search_terms.append(t)
+            search_specs.append((term, nets))
 
-    def _fetch(term: str) -> tuple[list[dict], bool]:
+    def _fetch(spec: tuple[str, list[str]]) -> tuple[list[dict], bool]:
+        term, nets = spec
         try:
             return normalizer.fetch_raw_posts(
                 termino=term, fecha_desde=date, keywords=keywords,
-                accounts=[], networks=networks, country=country,
+                accounts=[], networks=nets, country=country,
             )
         except Exception as e:  # una búsqueda que rompe no debe tumbar el análisis
             print(f"ERROR fetch_raw_posts term='{term}': {e}")
             return [], True
 
     # Búsquedas en PARALELO (antes en serie -> >120s). ex.map preserva el orden de
-    # search_terms, así el merge es determinístico (general primero, luego candidatos).
-    with ThreadPoolExecutor(max_workers=min(FETCH_CONCURRENCY, len(search_terms))) as ex:
-        resultados_por_termino = list(ex.map(_fetch, search_terms))
+    # search_specs, así el merge es determinístico (general primero, luego candidatos).
+    with ThreadPoolExecutor(max_workers=min(FETCH_CONCURRENCY, len(search_specs))) as ex:
+        resultados_por_termino = list(ex.map(_fetch, search_specs))
 
     posts: list[dict] = []
     seen_urls: set[str] = set()
@@ -388,15 +402,13 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
     posts_electorales = sum(1 for a in analysis if a.get("es_electoral") and a.get("candidatos"))
 
     # 4) Agregación + evidencia + comparación.
-    candidatos, baja_conf, fallback_vol = aggregate_net_sentiment(analysis)
+    candidatos, baja_conf = aggregate_net_sentiment(analysis)
     evidencia = build_evidence(analysis, posts_by_id)
     comparacion, comp_warnings = compare_vs_pollsters(candidatos, pollster_rows)
     warnings.extend(comp_warnings)
 
     if not candidatos:
         warnings.append("No se detectaron candidatos en las publicaciones analizadas.")
-    if fallback_vol and candidatos:
-        warnings.append("Sentimiento neto no discriminó (todos ≤ 0): el % se calculó por volumen de menciones.")
     if baja_conf:
         warnings.append(f"{baja_conf} mención(es) descartada(s) por baja confianza (< {CONF_MIN}).")
 
