@@ -68,14 +68,16 @@ CANDIDATOS_DEFAULT = [
 # Cuántos posts (como máximo) aporta cada término de búsqueda al corpus. Acota lo
 # que trae la búsqueda general para dejar lugar a las búsquedas por candidato (si
 # no, el término general coparía el corpus y volveríamos a ver un solo candidato).
-POSTS_PER_TERM = 4
+POSTS_PER_TERM = 3
 # Tope duro de posts que se mandan al clasificador electoral. Dimensionado para que
-# TODOS los candidatos de la lista entren (general + 12 candidatos × 4 ≈ 52) y a la
-# vez el análisis quede bajo el timeout de 120s del frontend.
-ELECTORAL_MAX_POSTS = 52
+# TODOS los candidatos de la lista tengan lugar (general + 12 candidatos × 3 ≈ 39)
+# y a la vez el análisis quede CÓMODO bajo el timeout de 120s: con 40 posts y lotes
+# de 20 son solo 2 lotes de Gemini, que corren en UNA tanda (ver concurrency abajo).
+# 52 posts / 3 lotes en 2 tandas llegaban a rozar los 120s cuando Gemini iba lento.
+ELECTORAL_MAX_POSTS = 40
 # El clasificador electoral corre en lotes de este tamaño (una llamada a Gemini por
-# lote) para no armar un prompt gigante y frágil con corpus grande.
-ELECTORAL_BATCH_SIZE = 18
+# lote). 20 => 40 posts entran en 2 lotes, que caben en una sola tanda paralela.
+ELECTORAL_BATCH_SIZE = 20
 
 # ── Concurrencia (clave para no exceder el timeout de 120s del frontend) ──────
 # Las búsquedas de SerpAPI y los lotes de Gemini son I/O bloqueante independiente.
