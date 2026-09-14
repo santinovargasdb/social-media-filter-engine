@@ -1,7 +1,12 @@
-fastapi
-uvicorn
-python-docx
-pydantic
-python-dotenv
-python-multipart
-requests
+# Dependencias de producción con versiones fijadas para un entorno reproducible.
+# starlette va pineado explícito: FastAPI 0.115.x requiere starlette >=0.40,<0.42,
+# y sin fijarlo el resolver puede traer una versión nueva incompatible (rompía
+# `import main` con: Router.__init__() got an unexpected keyword argument 'on_startup').
+fastapi==0.115.14
+starlette==0.41.3
+uvicorn==0.34.3
+pydantic==2.13.4
+python-docx==1.2.0
+python-dotenv==1.2.2
+python-multipart==0.0.28
+requests==2.34.0
