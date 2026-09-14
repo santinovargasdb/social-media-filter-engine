@@ -178,7 +178,7 @@ def test_run_boca_de_urna_flujo_completo(monkeypatch):
          "date": "", "post_url": "u2", "relevance_score": 70, "relevance_level": "alta",
          "matched_terms": [], "video_url": None},
     ]
-    monkeypatch.setattr(normalizer, "fetch_posts", lambda **kw: posts)
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: (posts, False))
     monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
         {"id": "Post_0", "es_electoral": True, "cita": "Milei la rompe",
          "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]},
@@ -200,7 +200,7 @@ def test_run_boca_de_urna_flujo_completo(monkeypatch):
 
 def test_run_boca_de_urna_cero_posts(monkeypatch):
     import normalizer
-    monkeypatch.setattr(normalizer, "fetch_posts", lambda **kw: [])
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: ([], False))
     out = el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar", pollster_csv="")
     assert out["candidatos"] == [] and out["comparacion"] == []
     assert any("publicaciones" in w.lower() for w in out["meta"]["warnings"])
@@ -252,7 +252,93 @@ def test_run_boca_de_urna_upstream_falla_propaga(monkeypatch):
     import normalizer, gemini_client as gc
     posts = [{"id": "1", "network": "twitter", "author": "", "author_url": "", "text": "x", "date": "",
               "post_url": "u", "relevance_score": 50, "relevance_level": "media", "matched_terms": [], "video_url": None}]
-    monkeypatch.setattr(normalizer, "fetch_posts", lambda **kw: posts)
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: (posts, False))
     monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: (None, 503))
     with pytest.raises(el.UpstreamUnavailableError):
         el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar", pollster_csv="")
+
+
+def test_run_boca_de_urna_serpapi_caido_es_upstream(monkeypatch):
+    """Sin posts Y con error de SerpAPI (any_upstream=True) -> 503, no vacío."""
+    import normalizer
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: ([], True))
+    with pytest.raises(el.UpstreamUnavailableError):
+        el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar", pollster_csv="")
+
+
+def test_build_candidate_search_list_une_fijos_y_csv():
+    rows = [
+        {"consultora": "X", "fecha": "2026-08-01", "candidato": "Javier Milei", "porcentaje": 42.0},  # ya en la fija
+        {"consultora": "X", "fecha": "2026-08-01", "candidato": "Juan Grabois", "porcentaje": 5.0},   # nuevo
+    ]
+    lista = el.build_candidate_search_list(rows)
+    # Todos los fijos están.
+    for fijo in el.CANDIDATOS_DEFAULT:
+        assert any(el.canonical_key(fijo) == el.canonical_key(n) for n in lista)
+    # El del CSV que no estaba se suma.
+    assert any(el.canonical_key(n) == el.canonical_key("Juan Grabois") for n in lista)
+    # Milei no se duplica (estaba en la fija y en el CSV).
+    milei_keys = [n for n in lista if el.canonical_key(n) == el.canonical_key("Javier Milei")]
+    assert len(milei_keys) == 1
+
+
+def test_run_boca_de_urna_busca_por_candidato(monkeypatch):
+    """El corpus se arma con la búsqueda general + una por cada candidato fijo."""
+    import normalizer
+    terminos = []
+
+    def fake_fetch(**kw):
+        terminos.append(kw["termino"])
+        return [], False
+
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", fake_fetch)
+    el.run_boca_de_urna(keywords=["elecciones presidenciales"], networks=["twitter"],
+                        date=None, country="ar", pollster_csv="")
+    assert "elecciones presidenciales" in terminos          # búsqueda general
+    assert any("Javier Milei" in t for t in terminos)        # búsqueda por candidato
+    # general + una por cada candidato fijo (deduplicado por texto).
+    assert len(terminos) == 1 + len(el.CANDIDATOS_DEFAULT)
+
+
+def _fake_rotation_por_lote(monkeypatch, respuestas):
+    """Instala un run_with_rotation que devuelve, en orden, cada (parsed, status)
+    de `respuestas`, uno por llamada. Registra la cantidad de llamadas."""
+    import gemini_client as gc
+    estado = {"n": 0}
+
+    def fake(prompt):
+        i = estado["n"]
+        estado["n"] += 1
+        return respuestas[i]
+
+    monkeypatch.setattr(gc, "run_with_rotation", fake)
+    return estado
+
+
+def test_analyze_posts_electoral_batchea_y_mergea(monkeypatch):
+    """Con más posts que ELECTORAL_BATCH_SIZE se hacen varias llamadas y cada lote
+    conserva SOLO sus propios ids."""
+    n = el.ELECTORAL_BATCH_SIZE + 5
+    posts_by_id = {f"Post_{i}": {"text": "x", "network": "twitter"} for i in range(n)}
+    # Cada respuesta lista TODOS los ids; el batch ignora los que no le tocan.
+    mirror = [{"id": f"Post_{i}", "candidatos": [], "cita": "", "es_electoral": True} for i in range(n)]
+    estado = _fake_rotation_por_lote(monkeypatch, [(mirror, None), (mirror, None)])
+    out = el.analyze_posts_electoral(posts_by_id)
+    assert estado["n"] == 2               # ceil(n / BATCH_SIZE) == 2
+    assert len(out) == n                  # cada id aparece exactamente una vez
+    assert {o["id"] for o in out} == set(posts_by_id)
+
+
+def test_analyze_posts_electoral_fallo_parcial_devuelve_parcial(monkeypatch):
+    """Si un lote falla (None) pero otro anda, se devuelven resultados parciales,
+    no None."""
+    n = el.ELECTORAL_BATCH_SIZE + 5
+    posts_by_id = {f"Post_{i}": {"text": "x", "network": "twitter"} for i in range(n)}
+    mirror = [{"id": f"Post_{i}", "candidatos": [], "cita": "", "es_electoral": True} for i in range(n)]
+    # Lote 0 falla (upstream), lote 1 anda.
+    estado = _fake_rotation_por_lote(monkeypatch, [(None, 503), (mirror, None)])
+    out = el.analyze_posts_electoral(posts_by_id)
+    assert out is not None
+    assert estado["n"] == 2
+    # Solo sobreviven los ids del segundo lote (Post_20..Post_24 con BATCH_SIZE=20).
+    assert len(out) == n - el.ELECTORAL_BATCH_SIZE

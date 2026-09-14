@@ -29,6 +29,30 @@ CONF_MIN = 0.5
 POSTURAS_VALIDAS = ("a_favor", "en_contra", "neutro")
 CSV_COLUMNS = ("consultora", "fecha", "candidato", "porcentaje")
 
+# ── Lista fija de candidatos (EDITABLE) ───────────────────────────────────────
+# EDITÁ ESTA LISTA con los candidatos de la elección vigente. La Boca de Urna hace
+# UNA búsqueda dedicada por cada candidato (además de la búsqueda general) para
+# garantizar que aparezcan VARIAS opiniones y no un solo candidato. Los nombres de
+# acá también se cruzan contra los del CSV de consultoras.
+CANDIDATOS_DEFAULT = [
+    "Javier Milei",
+    "Sergio Massa",
+    "Patricia Bullrich",
+    "Axel Kicillof",
+    "Cristina Kirchner",
+    "Mauricio Macri",
+]
+
+# Cuántos posts (como máximo) aporta cada término de búsqueda al corpus. Acota lo
+# que trae la búsqueda general para dejar lugar a las búsquedas por candidato (si
+# no, el término general coparía el corpus y volveríamos a ver un solo candidato).
+POSTS_PER_TERM = 10
+# Tope duro de posts que se mandan al clasificador electoral (protege el prompt).
+ELECTORAL_MAX_POSTS = 80
+# El clasificador electoral corre en lotes de este tamaño (una llamada a Gemini por
+# lote) para no armar un prompt gigante y frágil con corpus grande.
+ELECTORAL_BATCH_SIZE = 20
+
 
 def _parse_pct(raw: str) -> float:
     """Convierte '42,5' o '42.5' a float. Lanza ValueError si no es numérico."""
@@ -255,23 +279,76 @@ def compare_vs_pollsters(candidatos: list[dict], pollster_rows: list[dict]) -> t
     return comparacion, warnings
 
 
+def build_candidate_search_list(pollster_rows: list[dict]) -> list[str]:
+    """Candidatos a buscar: la lista fija editable (CANDIDATOS_DEFAULT) unida a los
+    candidatos presentes en el CSV de consultoras (si se cargó), sin duplicar por
+    clave canónica. La lista fija manda; el CSV solo suma nombres que no estaban."""
+    nombres: list[str] = []
+    vistos: set[str] = set()
+    for nombre in list(CANDIDATOS_DEFAULT) + [r["candidato"] for r in pollster_rows]:
+        nombre = (nombre or "").strip()
+        key = canonical_key(nombre)
+        if not key or key in vistos:
+            continue
+        vistos.add(key)
+        nombres.append(nombre)
+    return nombres
+
+
 def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
                      country: str, pollster_csv: str) -> dict:
-    """Orquesta la boca de urna. Reusa normalizer.fetch_posts para el corpus,
-    corre el análisis electoral y arma el payload. Lanza UpstreamUnavailableError
+    """Orquesta la boca de urna. Arma el corpus con una búsqueda general MÁS una
+    búsqueda dedicada por cada candidato (para captar varias opiniones), corre el
+    análisis electoral y arma el payload. Lanza UpstreamUnavailableError
     (Gemini/SerpAPI caído) o ValueError (CSV con header inválido)."""
     # 1) CSV primero: si el header es inválido, cortamos con ValueError (-> 400).
     pollster_rows, csv_warnings = parse_pollster_csv(pollster_csv)
-
-    # 2) Corpus: reuso del fetch del monitor en modo amplio (no SMATA).
-    termino = " ".join([k for k in keywords if k and k.strip()]).strip() or "elecciones presidenciales"
-    posts = normalizer.fetch_posts(
-        termino=termino, fecha_desde=date, smata_mode=False,
-        keywords=keywords, accounts=[], networks=networks, country=country,
-    )
-
     warnings = list(csv_warnings)
+
+    # 2) Corpus: búsqueda general + UNA por candidato (lista fija ∪ CSV), SIN el
+    #    filtro de relevancia del monitor (fetch_raw_posts). El clasificador
+    #    electoral decide qué es electoral. Esto es lo que garantiza que aparezcan
+    #    varios candidatos y no uno solo. Cada término aporta hasta POSTS_PER_TERM
+    #    posts para que la búsqueda general no cope el corpus.
+    termino = " ".join([k for k in keywords if k and k.strip()]).strip() or "elecciones presidenciales"
+    candidatos_buscar = build_candidate_search_list(pollster_rows)
+    search_terms: list[str] = []
+    vistos_terms: set[str] = set()
+    for t in [termino] + [f"{c} {termino}".strip() for c in candidatos_buscar]:
+        k = t.lower()
+        if k and k not in vistos_terms:
+            vistos_terms.add(k)
+            search_terms.append(t)
+
+    posts: list[dict] = []
+    seen_urls: set[str] = set()
+    any_upstream = False
+    for term in search_terms:
+        raw, up = normalizer.fetch_raw_posts(
+            termino=term, fecha_desde=date, keywords=keywords,
+            accounts=[], networks=networks, country=country,
+        )
+        any_upstream = any_upstream or up
+        added = 0
+        for p in raw:
+            if added >= POSTS_PER_TERM:
+                break
+            url = p.get("post_url") or ""
+            if url and url in seen_urls:
+                continue
+            if url:
+                seen_urls.add(url)
+            posts.append(p)
+            added += 1
+    if len(posts) > ELECTORAL_MAX_POSTS:
+        posts = posts[:ELECTORAL_MAX_POSTS]
+
     if not posts:
+        # Distinguir "SerpAPI caído" (503) de "no hay resultados" (vacío legítimo).
+        if any_upstream:
+            raise UpstreamUnavailableError(
+                "El buscador (SerpAPI) no respondió, probablemente por límite de "
+                "cuota. Reintentá en un minuto.")
         warnings.append("No se encontraron publicaciones para el término buscado.")
         return {"candidatos": [], "evidencia": [], "comparacion": [],
                 "meta": {"total_posts": 0, "posts_electorales": 0,
@@ -307,8 +384,32 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
 
 
 def analyze_posts_electoral(posts_by_id: dict[str, dict]) -> list[dict] | None:
-    """Clasifica cada post (candidato + postura + confianza) vía Gemini. Devuelve
-    el mirror saneado por id, o None si el transporte falló (upstream)."""
+    """Clasifica cada post (candidato + postura + confianza) vía Gemini, en LOTES de
+    ELECTORAL_BATCH_SIZE (una llamada por lote) para no armar un prompt gigante y
+    frágil con corpus grande. Devuelve el mirror saneado por id, o None SOLO si
+    TODOS los lotes fallaron por upstream; si al menos uno anduvo, devuelve los
+    resultados parciales (mejor eso que un 503 total)."""
+    if not posts_by_id:
+        return []
+    items = list(posts_by_id.items())
+    out: list[dict] = []
+    alguno_ok = False
+    for i in range(0, len(items), ELECTORAL_BATCH_SIZE):
+        batch = dict(items[i:i + ELECTORAL_BATCH_SIZE])
+        res = _analyze_electoral_batch(batch)
+        if res is None:
+            print(f"DEBUG electoral: lote {i // ELECTORAL_BATCH_SIZE} falló (upstream).")
+            continue
+        alguno_ok = True
+        out.extend(res)
+    if not alguno_ok:
+        return None
+    return out
+
+
+def _analyze_electoral_batch(posts_by_id: dict[str, dict]) -> list[dict] | None:
+    """Corre UN lote por Gemini. Devuelve el mirror saneado por id, o None si el
+    transporte falló (upstream)."""
     if not posts_by_id:
         return []
     items_para_prompt = [

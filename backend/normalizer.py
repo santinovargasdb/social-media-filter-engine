@@ -372,6 +372,57 @@ def _translate_query_for_country(termino: str, country: str) -> str:
     return query
 
 
+def _normalize_raw_post(
+    src: dict,
+    termino: str,
+    keywords: list[str] | None,
+    texto_override: str | None = None,
+) -> dict | None:
+    """Mapea un resultado crudo de SerpAPI (title/snippet/url/date/network) al shape
+    final de post, SIN puntuación de relevancia. Devuelve None si es basura de TikTok
+    (vacío, solo música, solo hashtags o conteos sueltos — C.2).
+
+    Lo reutilizan dos caminos: el monitor (`_process_with_gemini`, que después le
+    agrega el score de Gemini) y la Boca de Urna (`fetch_raw_posts`, que NO puntúa:
+    el filtro de relevancia lo hace aguas abajo el clasificador electoral, no el
+    scorer del monitor de prensa).
+    """
+    post_url = src.get("url", "") or ""
+    snippet_src = src.get("snippet", "") or src.get("title", "")
+    # B.5: texto traducido al español si el caller lo provee (item "texto" de Gemini);
+    # si no, el snippet crudo tal cual.
+    texto = (texto_override or "").strip() or snippet_src
+    date = src.get("date", "") or ""
+    network, author, author_url, post_id = _parse_post_url(post_url, hint_network=src.get("network"))
+
+    # C.2: purga de basura de TikTok. Se evalúa sobre el texto CRUDO de SerpAPI (no
+    # sobre la traducción) para detectar el ruido de origen.
+    if network == "tiktok" and _is_tiktok_garbage(snippet_src, src.get("title", "")):
+        return None
+
+    # Prioridad ABSOLUTA al post real: si la URL ya es un deep-link válido al posteo
+    # (/p/, /reel/, /tv/ en IG; /video/ en TikTok; /status/ en X), la respetamos sin
+    # pisarla. Solo cuando la URL está vacía, rota, apunta a la home/perfil o no se
+    # pudo extraer el autor ("?"), caemos al fallback de TikTok (perfil o búsqueda).
+    link = post_url
+    if not _is_specific_post_url(network, post_url) and network == "tiktok":
+        fallback = _tiktok_search_fallback_url(author, termino)
+        if fallback:
+            link = fallback
+
+    return {
+        "id": post_id or post_url,
+        "network": network,
+        "author": author,
+        "author_url": author_url,
+        "text": texto,
+        "date": date,
+        "post_url": link,
+        "matched_terms": _find_matched_terms(texto, keywords or []),
+        "video_url": None,
+    }
+
+
 def _process_with_gemini(
     resultados: list[dict],
     termino: str,
@@ -516,47 +567,15 @@ Publicaciones a evaluar:
         except (TypeError, ValueError):
             score = 0
 
-        post_url = src.get("url", "") or ""
-        snippet_src = src.get("snippet", "") or src.get("title", "")
-        # B.5: si Gemini devolvió "texto" (traducido al español cuando el original
-        # estaba en otro idioma), lo usamos como texto a mostrar. Fallback al
-        # snippet crudo si la IA no lo devolvió.
-        texto_ia = (item.get("texto") or "").strip()
-        snippet = texto_ia or snippet_src
-        date = src.get("date", "") or ""
-        network, author, author_url, post_id = _parse_post_url(post_url, hint_network=src.get("network"))
-
-        # C.2: purga de basura de TikTok (vacíos, solo música, solo hashtags,
-        # conteos sueltos). Se evalúa sobre el texto crudo de SerpAPI, no sobre la
-        # traducción, para detectar el ruido de origen.
-        if network == "tiktok" and _is_tiktok_garbage(snippet_src, src.get("title", "")):
+        # Normalización compartida (URL/autor/texto + purga de basura de TikTok).
+        # texto_override = "texto" traducido por Gemini (B.5); cae al snippet crudo.
+        post = _normalize_raw_post(src, termino, keywords, texto_override=item.get("texto"))
+        if post is None:
             tiktok_garbage += 1
             continue
-
-        # Prioridad ABSOLUTA al post real: si la URL ya es un deep-link válido al
-        # posteo (/p/, /reel/, /tv/ en IG; /video/ en TikTok; /status/ en X), la
-        # respetamos sin pisarla. Solo cuando la URL está vacía, rota, apunta a la
-        # home/perfil o no se pudo extraer el autor ("?"), caemos al fallback de
-        # TikTok (perfil del creador o búsqueda global por keyword).
-        link = post_url
-        if not _is_specific_post_url(network, post_url) and network == "tiktok":
-            fallback = _tiktok_search_fallback_url(author, termino)
-            if fallback:
-                link = fallback
-
-        posts.append({
-            "id": post_id or post_url,
-            "network": network,
-            "author": author,
-            "author_url": author_url,
-            "text": snippet,
-            "date": date,
-            "post_url": link,
-            "relevance_score": score,
-            "relevance_level": _level_from_score(score),
-            "matched_terms": _find_matched_terms(snippet, keywords),
-            "video_url": None,
-        })
+        post["relevance_score"] = score
+        post["relevance_level"] = _level_from_score(score)
+        posts.append(post)
 
     if tiktok_garbage:
         print(f"DEBUG purga TikTok (C.2): {tiktok_garbage} posteos basura (vacío/música/hashtags/conteos) destruidos")
@@ -723,3 +742,65 @@ def fetch_posts(
     else:
         _CACHE[cache_key] = (time.time(), all_posts)
     return all_posts
+
+
+def fetch_raw_posts(
+    termino: str,
+    fecha_desde: str | None = None,
+    keywords: list[str] | None = None,
+    accounts: list[str] | None = None,
+    networks: list[str] | None = None,
+    country: str = "ar",
+) -> tuple[list[dict], bool]:
+    """Trae posts normalizados SIN el scoring de relevancia del monitor de prensa.
+
+    Pensado para la Boca de Urna: acá NO corremos `_process_with_gemini` (el scorer
+    genérico del monitor con su piso de score), porque descartaría posteos
+    electorales válidos por no superar el umbral de "relevancia gremial/política".
+    El filtro de qué es electoral lo hace aguas abajo el clasificador electoral
+    (`electoral.analyze_posts_electoral`).
+
+    Corre SerpAPI por cada red, normaliza cada resultado con `_normalize_raw_post`
+    (misma limpieza de URLs/autor y purga de basura de TikTok que el monitor) y
+    dedupea por post_url. NO cachea: el orquestrador de la Boca de Urna combina
+    varios términos de búsqueda y maneja su propio tope.
+
+    Devuelve (posts, hubo_error_upstream). El bool permite al caller distinguir
+    "no hay resultados" de "SerpAPI se cayó" (para responder 503 en vez de vacío).
+    """
+    nets = [n for n in (networks or []) if n in SUPPORTED_NETWORKS]
+    if not nets:
+        nets = ["twitter"]  # fallback seguro si el front no manda nada válido
+
+    # Traducción para países no hispanohablantes (igual criterio que fetch_posts).
+    termino_busqueda = _translate_query_for_country(termino, country)
+
+    posts: list[dict] = []
+    any_upstream = False
+    seen_urls: set[str] = set()
+    for net in nets:
+        resultados = search_serpapi(
+            termino_busqueda,
+            network=net,
+            max_results=10,
+            fecha_desde=fecha_desde,
+            accounts=accounts,
+            country=country,
+        )
+        if resultados is None:
+            any_upstream = True
+            continue
+        for r in resultados:
+            src = dict(r)
+            src["network"] = net
+            post = _normalize_raw_post(src, termino, keywords or [])
+            if post is None:
+                continue
+            url = post.get("post_url") or ""
+            if url and url in seen_urls:
+                continue
+            if url:
+                seen_urls.add(url)
+            posts.append(post)
+    print(f"DEBUG: fetch_raw_posts termino='{termino}' redes={nets} -> {len(posts)} posts (upstream_error={any_upstream})")
+    return posts, any_upstream
