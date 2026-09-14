@@ -13,6 +13,7 @@ import csv
 import io
 import json
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 
 import gemini_client
 import normalizer
@@ -46,12 +47,24 @@ CANDIDATOS_DEFAULT = [
 # Cuántos posts (como máximo) aporta cada término de búsqueda al corpus. Acota lo
 # que trae la búsqueda general para dejar lugar a las búsquedas por candidato (si
 # no, el término general coparía el corpus y volveríamos a ver un solo candidato).
-POSTS_PER_TERM = 10
-# Tope duro de posts que se mandan al clasificador electoral (protege el prompt).
-ELECTORAL_MAX_POSTS = 80
+POSTS_PER_TERM = 6
+# Tope duro de posts que se mandan al clasificador electoral. Acotado para que el
+# análisis entre cómodo bajo el timeout de 120s del frontend (más posts = más
+# tokens y más lotes de Gemini = más lento).
+ELECTORAL_MAX_POSTS = 36
 # El clasificador electoral corre en lotes de este tamaño (una llamada a Gemini por
 # lote) para no armar un prompt gigante y frágil con corpus grande.
-ELECTORAL_BATCH_SIZE = 20
+ELECTORAL_BATCH_SIZE = 18
+
+# ── Concurrencia (clave para no exceder el timeout de 120s del frontend) ──────
+# Las búsquedas de SerpAPI y los lotes de Gemini son I/O bloqueante independiente.
+# Antes corrían en SERIE (≈21 búsquedas + varios lotes uno atrás de otro) y el
+# request tardaba >120s → timeout. Ahora corren en paralelo con pools acotados.
+# SerpAPI: pool moderado para respetar el límite de concurrencia del plan.
+FETCH_CONCURRENCY = 4
+# Gemini: pool bajo para no gatillar los rate-limits del free-tier (run_with_rotation
+# ya maneja 429/503, pero mejor no provocarlos con demasiadas llamadas simultáneas).
+ELECTORAL_BATCH_CONCURRENCY = 2
 
 
 def _parse_pct(raw: str) -> float:
@@ -320,14 +333,25 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
             vistos_terms.add(k)
             search_terms.append(t)
 
+    def _fetch(term: str) -> tuple[list[dict], bool]:
+        try:
+            return normalizer.fetch_raw_posts(
+                termino=term, fecha_desde=date, keywords=keywords,
+                accounts=[], networks=networks, country=country,
+            )
+        except Exception as e:  # una búsqueda que rompe no debe tumbar el análisis
+            print(f"ERROR fetch_raw_posts term='{term}': {e}")
+            return [], True
+
+    # Búsquedas en PARALELO (antes en serie -> >120s). ex.map preserva el orden de
+    # search_terms, así el merge es determinístico (general primero, luego candidatos).
+    with ThreadPoolExecutor(max_workers=min(FETCH_CONCURRENCY, len(search_terms))) as ex:
+        resultados_por_termino = list(ex.map(_fetch, search_terms))
+
     posts: list[dict] = []
     seen_urls: set[str] = set()
     any_upstream = False
-    for term in search_terms:
-        raw, up = normalizer.fetch_raw_posts(
-            termino=term, fecha_desde=date, keywords=keywords,
-            accounts=[], networks=networks, country=country,
-        )
+    for raw, up in resultados_por_termino:
         any_upstream = any_upstream or up
         added = 0
         for p in raw:
@@ -392,16 +416,20 @@ def analyze_posts_electoral(posts_by_id: dict[str, dict]) -> list[dict] | None:
     if not posts_by_id:
         return []
     items = list(posts_by_id.items())
+    batches = [dict(items[i:i + ELECTORAL_BATCH_SIZE])
+               for i in range(0, len(items), ELECTORAL_BATCH_SIZE)]
+
+    # Lotes en PARALELO (antes en serie -> sumaba el tiempo de cada llamada a Gemini).
+    # Pool bajo (ELECTORAL_BATCH_CONCURRENCY) para no gatillar rate-limits del free-tier.
     out: list[dict] = []
     alguno_ok = False
-    for i in range(0, len(items), ELECTORAL_BATCH_SIZE):
-        batch = dict(items[i:i + ELECTORAL_BATCH_SIZE])
-        res = _analyze_electoral_batch(batch)
-        if res is None:
-            print(f"DEBUG electoral: lote {i // ELECTORAL_BATCH_SIZE} falló (upstream).")
-            continue
-        alguno_ok = True
-        out.extend(res)
+    with ThreadPoolExecutor(max_workers=min(ELECTORAL_BATCH_CONCURRENCY, len(batches))) as ex:
+        for res in ex.map(_analyze_electoral_batch, batches):
+            if res is None:
+                print("DEBUG electoral: un lote falló (upstream).")
+                continue
+            alguno_ok = True
+            out.extend(res)
     if not alguno_ok:
         return None
     return out

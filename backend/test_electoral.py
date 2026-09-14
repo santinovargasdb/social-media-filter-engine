@@ -1,3 +1,5 @@
+import re
+
 import electoral as el
 import pytest
 
@@ -300,45 +302,51 @@ def test_run_boca_de_urna_busca_por_candidato(monkeypatch):
     assert len(terminos) == 1 + len(el.CANDIDATOS_DEFAULT)
 
 
-def _fake_rotation_por_lote(monkeypatch, respuestas):
-    """Instala un run_with_rotation que devuelve, en orden, cada (parsed, status)
-    de `respuestas`, uno por llamada. Registra la cantidad de llamadas."""
+def _fake_rotation_por_contenido(monkeypatch, fail_if_contains_index=None):
+    """Instala un run_with_rotation que responde según el CONTENIDO del lote (los
+    lotes corren en paralelo, así que no se puede depender del orden de llamada).
+
+    Cada post de test tiene texto 'MARK_<i>'; el fake detecta qué índices trae el
+    prompt y devuelve un mirror con esos ids. Si `fail_if_contains_index` está en
+    el lote, ese lote devuelve (None, 503) simulando una falla upstream. Registra
+    las llamadas en la lista devuelta (append es thread-safe bajo el GIL)."""
     import gemini_client as gc
-    estado = {"n": 0}
+    calls = []
 
     def fake(prompt):
-        i = estado["n"]
-        estado["n"] += 1
-        return respuestas[i]
+        calls.append(1)
+        idx = [int(m) for m in re.findall(r"MARK_(\d+)", prompt)]
+        if fail_if_contains_index is not None and fail_if_contains_index in idx:
+            return None, 503
+        mirror = [{"id": f"Post_{i}", "candidatos": [], "cita": "", "es_electoral": True} for i in idx]
+        return mirror, None
 
     monkeypatch.setattr(gc, "run_with_rotation", fake)
-    return estado
+    return calls
 
 
 def test_analyze_posts_electoral_batchea_y_mergea(monkeypatch):
-    """Con más posts que ELECTORAL_BATCH_SIZE se hacen varias llamadas y cada lote
-    conserva SOLO sus propios ids."""
+    """Con más posts que ELECTORAL_BATCH_SIZE se hacen varias llamadas (en paralelo)
+    y cada lote conserva SOLO sus propios ids; el merge no pierde ni duplica."""
     n = el.ELECTORAL_BATCH_SIZE + 5
-    posts_by_id = {f"Post_{i}": {"text": "x", "network": "twitter"} for i in range(n)}
-    # Cada respuesta lista TODOS los ids; el batch ignora los que no le tocan.
-    mirror = [{"id": f"Post_{i}", "candidatos": [], "cita": "", "es_electoral": True} for i in range(n)]
-    estado = _fake_rotation_por_lote(monkeypatch, [(mirror, None), (mirror, None)])
+    posts_by_id = {f"Post_{i}": {"text": f"MARK_{i}", "network": "twitter"} for i in range(n)}
+    calls = _fake_rotation_por_contenido(monkeypatch)
     out = el.analyze_posts_electoral(posts_by_id)
-    assert estado["n"] == 2               # ceil(n / BATCH_SIZE) == 2
+    assert len(calls) == 2                # ceil(n / BATCH_SIZE) == 2 lotes
     assert len(out) == n                  # cada id aparece exactamente una vez
     assert {o["id"] for o in out} == set(posts_by_id)
 
 
 def test_analyze_posts_electoral_fallo_parcial_devuelve_parcial(monkeypatch):
     """Si un lote falla (None) pero otro anda, se devuelven resultados parciales,
-    no None."""
+    no None. Independiente del orden en que terminen los lotes paralelos."""
     n = el.ELECTORAL_BATCH_SIZE + 5
-    posts_by_id = {f"Post_{i}": {"text": "x", "network": "twitter"} for i in range(n)}
-    mirror = [{"id": f"Post_{i}", "candidatos": [], "cita": "", "es_electoral": True} for i in range(n)]
-    # Lote 0 falla (upstream), lote 1 anda.
-    estado = _fake_rotation_por_lote(monkeypatch, [(None, 503), (mirror, None)])
+    posts_by_id = {f"Post_{i}": {"text": f"MARK_{i}", "network": "twitter"} for i in range(n)}
+    # El lote que contiene Post_0 (el primero, de tamaño BATCH_SIZE) falla.
+    calls = _fake_rotation_por_contenido(monkeypatch, fail_if_contains_index=0)
     out = el.analyze_posts_electoral(posts_by_id)
     assert out is not None
-    assert estado["n"] == 2
-    # Solo sobreviven los ids del segundo lote (Post_20..Post_24 con BATCH_SIZE=20).
+    assert len(calls) == 2
+    # Sobreviven todos menos el primer lote (Post_0..Post_{BATCH_SIZE-1}).
     assert len(out) == n - el.ELECTORAL_BATCH_SIZE
+    assert all(int(o["id"].split("_")[1]) >= el.ELECTORAL_BATCH_SIZE for o in out)

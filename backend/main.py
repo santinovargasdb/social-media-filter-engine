@@ -9,6 +9,7 @@ from typing import List, Literal, Optional
 from normalizer import fetch_posts, UpstreamUnavailableError
 from docx_generator import generate_docx
 import electoral
+import asyncio
 import datetime
 import io
 import os
@@ -140,7 +141,11 @@ class BocaDeUrnaRequest(BaseModel):
 @app.post("/api/boca-de-urna")
 async def boca_de_urna_endpoint(request: BocaDeUrnaRequest):
     try:
-        return electoral.run_boca_de_urna(
+        # run_boca_de_urna es sincrónico y bloqueante (SerpAPI + Gemini). Lo corremos
+        # en un thread para NO bloquear el event loop: si no, un análisis (que puede
+        # tardar decenas de segundos) congelaría todo el server, incluido el monitor.
+        return await asyncio.to_thread(
+            electoral.run_boca_de_urna,
             keywords=request.keywords,
             networks=request.networks,
             date=request.date,
