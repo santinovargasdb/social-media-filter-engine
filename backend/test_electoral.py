@@ -271,16 +271,19 @@ def test_run_boca_de_urna_serpapi_caido_es_upstream(monkeypatch):
 
 
 def test_build_candidate_search_list_une_fijos_y_csv():
+    # "Maximiliano Pullaro" NO está en la lista fija -> debe sumarse desde el CSV.
+    NUEVO_CSV = "Maximiliano Pullaro"
+    assert not any(el.canonical_key(NUEVO_CSV) == el.canonical_key(n) for n in el.CANDIDATOS_DEFAULT)
     rows = [
         {"consultora": "X", "fecha": "2026-08-01", "candidato": "Javier Milei", "porcentaje": 42.0},  # ya en la fija
-        {"consultora": "X", "fecha": "2026-08-01", "candidato": "Juan Grabois", "porcentaje": 5.0},   # nuevo
+        {"consultora": "X", "fecha": "2026-08-01", "candidato": NUEVO_CSV, "porcentaje": 5.0},        # nuevo
     ]
     lista = el.build_candidate_search_list(rows)
     # Todos los fijos están.
     for fijo in el.CANDIDATOS_DEFAULT:
         assert any(el.canonical_key(fijo) == el.canonical_key(n) for n in lista)
     # El del CSV que no estaba se suma.
-    assert any(el.canonical_key(n) == el.canonical_key("Juan Grabois") for n in lista)
+    assert any(el.canonical_key(n) == el.canonical_key(NUEVO_CSV) for n in lista)
     # Milei no se duplica (estaba en la fija y en el CSV).
     milei_keys = [n for n in lista if el.canonical_key(n) == el.canonical_key("Javier Milei")]
     assert len(milei_keys) == 1

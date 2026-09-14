@@ -35,23 +35,44 @@ CSV_COLUMNS = ("consultora", "fecha", "candidato", "porcentaje")
 # UNA búsqueda dedicada por cada candidato (además de la búsqueda general) para
 # garantizar que aparezcan VARIAS opiniones y no un solo candidato. Los nombres de
 # acá también se cruzan contra los del CSV de consultoras.
+#
+# OJO CON LA CUOTA: cada nombre = 1 búsqueda extra de SerpAPI por análisis. Con
+# esta lista (12) son ~15 búsquedas por análisis. Si tu plan de SerpAPI es chico,
+# recortá a los 5-6 nombres núcleo. Para 2027 las fórmulas aún no están cerradas;
+# esto son los contendientes/referentes presidenciales más firmes por espacio.
+# Otros nombres mencionados que podés sumar si querés: Victoria Villarruel ya está;
+# Jorge Macri, Ignacio Torres, Rogelio Frigerio, Maximiliano Pullaro, Gustavo
+# Valdés, Rodrigo de Loredo, Martín Llaryora, Ricardo Quintela, Nicolás del Caño,
+# Máximo Kirchner, Marcos Galperin, Daniel Hadad.
 CANDIDATOS_DEFAULT = [
+    # La Libertad Avanza / oficialismo
     "Javier Milei",
-    "Sergio Massa",
+    "Victoria Villarruel",
     "Patricia Bullrich",
+    # Unión por la Patria / peronismo
     "Axel Kicillof",
-    "Cristina Kirchner",
+    "Cristina Fernández de Kirchner",
+    "Sergio Massa",
+    "Juan Grabois",
+    "Sergio Uñac",
+    # PRO / Juntos por el Cambio
     "Mauricio Macri",
+    # Provincias Unidas / centro
+    "Juan Schiaretti",
+    # Unión Cívica Radical
+    "Facundo Manes",
+    # Frente de Izquierda (FIT-U)
+    "Myriam Bregman",
 ]
 
 # Cuántos posts (como máximo) aporta cada término de búsqueda al corpus. Acota lo
 # que trae la búsqueda general para dejar lugar a las búsquedas por candidato (si
 # no, el término general coparía el corpus y volveríamos a ver un solo candidato).
-POSTS_PER_TERM = 6
-# Tope duro de posts que se mandan al clasificador electoral. Acotado para que el
-# análisis entre cómodo bajo el timeout de 120s del frontend (más posts = más
-# tokens y más lotes de Gemini = más lento).
-ELECTORAL_MAX_POSTS = 36
+POSTS_PER_TERM = 4
+# Tope duro de posts que se mandan al clasificador electoral. Dimensionado para que
+# TODOS los candidatos de la lista entren (general + 12 candidatos × 4 ≈ 52) y a la
+# vez el análisis quede bajo el timeout de 120s del frontend.
+ELECTORAL_MAX_POSTS = 52
 # El clasificador electoral corre en lotes de este tamaño (una llamada a Gemini por
 # lote) para no armar un prompt gigante y frágil con corpus grande.
 ELECTORAL_BATCH_SIZE = 18
@@ -61,7 +82,7 @@ ELECTORAL_BATCH_SIZE = 18
 # Antes corrían en SERIE (≈21 búsquedas + varios lotes uno atrás de otro) y el
 # request tardaba >120s → timeout. Ahora corren en paralelo con pools acotados.
 # SerpAPI: pool moderado para respetar el límite de concurrencia del plan.
-FETCH_CONCURRENCY = 4
+FETCH_CONCURRENCY = 5
 # Gemini: pool bajo para no gatillar los rate-limits del free-tier (run_with_rotation
 # ya maneja 429/503, pero mejor no provocarlos con demasiadas llamadas simultáneas).
 ELECTORAL_BATCH_CONCURRENCY = 2
