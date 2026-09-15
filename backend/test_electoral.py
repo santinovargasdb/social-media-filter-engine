@@ -361,3 +361,23 @@ def test_analyze_posts_electoral_fallo_parcial_devuelve_parcial(monkeypatch):
     # Sobreviven todos menos el primer lote (Post_0..Post_{BATCH_SIZE-1}).
     assert len(out) == n - el.ELECTORAL_BATCH_SIZE
     assert all(int(o["id"].split("_")[1]) >= el.ELECTORAL_BATCH_SIZE for o in out)
+
+
+def test_compare_arrastra_la_fuente():
+    candidatos = [{"nombre": "Javier Milei", "pct": 44.0, "pos": 0, "neg": 0, "neu": 0, "menciones": 0}]
+    rows = [{"consultora": "Opinaia", "fecha": "2026-09-01", "candidato": "Javier Milei",
+             "porcentaje": 40.0, "fuente_url": "https://n/1", "fuente_titulo": "Nota Opinaia"}]
+    comp, _w = el.compare_vs_pollsters(candidatos, rows)
+    cell = comp[0]["consultoras"][0]
+    assert cell["consultora"] == "Opinaia" and cell["pct"] == 40.0 and cell["gap"] == 4.0
+    assert cell["fuente_url"] == "https://n/1" and cell["fuente_titulo"] == "Nota Opinaia"
+    assert cell["fecha"] == "2026-09-01"
+
+
+def test_compare_sin_fuente_csv_no_rompe():
+    # Filas de CSV (sin campos de fuente) -> las claves de fuente quedan None/"".
+    candidatos = [{"nombre": "Milei", "pct": 44.0, "pos": 0, "neg": 0, "neu": 0, "menciones": 0}]
+    rows = [{"consultora": "X", "fecha": "2026-08-01", "candidato": "Milei", "porcentaje": 42.0}]
+    comp, _w = el.compare_vs_pollsters(candidatos, rows)
+    cell = comp[0]["consultoras"][0]
+    assert cell["pct"] == 42.0 and cell.get("fuente_url") is None

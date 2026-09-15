@@ -282,10 +282,10 @@ def compare_vs_pollsters(candidatos: list[dict], pollster_rows: list[dict]) -> t
         k = (canonical_key(r["candidato"]), r["consultora"])
         if k not in latest or r["fecha"] > latest[k]["fecha"]:
             latest[k] = r
-    # Agrupar por candidato_key -> {consultora: pct}.
-    por_candidato: dict[str, dict[str, float]] = {}
+    # Agrupar por candidato_key -> {consultora: fila_completa} (para arrastrar la fuente).
+    por_candidato: dict[str, dict[str, dict]] = {}
     for (cand_key, consultora), r in latest.items():
-        por_candidato.setdefault(cand_key, {})[consultora] = r["porcentaje"]
+        por_candidato.setdefault(cand_key, {})[consultora] = r
 
     comparacion: list[dict] = []
     matched_csv_keys: set[str] = set()
@@ -295,23 +295,35 @@ def compare_vs_pollsters(candidatos: list[dict], pollster_rows: list[dict]) -> t
         # Si dos CSV keys distintas matchean el mismo candidato de redes y
         # ambas tienen datos de la MISMA consultora, promediamos (no pisamos)
         # para evitar perder un valor en colisiones de alias multi-match.
-        consultoras_pct: dict[str, float] = {}
+        consultoras_data: dict[str, dict] = {}
         for csv_key, por_cons in por_candidato.items():
             if _keys_match(key, csv_key):
                 matched_csv_keys.add(csv_key)
-                for consultora, pct in por_cons.items():
-                    if consultora in consultoras_pct:
-                        consultoras_pct[consultora] = round(
-                            (consultoras_pct[consultora] + pct) / 2, 1
-                        )
+                for consultora, r in por_cons.items():
+                    pct = r["porcentaje"]
+                    if consultora in consultoras_data:
+                        prev = consultoras_data[consultora]
+                        prev["pct"] = round((prev["pct"] + pct) / 2, 1)
+                        # conservar la fuente de la fila más reciente
+                        if r.get("fecha", "") > prev.get("fecha", ""):
+                            prev["fuente_url"] = r.get("fuente_url")
+                            prev["fuente_titulo"] = r.get("fuente_titulo")
+                            prev["fecha"] = r.get("fecha", "")
                     else:
-                        consultoras_pct[consultora] = pct
+                        consultoras_data[consultora] = {
+                            "pct": pct,
+                            "fuente_url": r.get("fuente_url"),
+                            "fuente_titulo": r.get("fuente_titulo"),
+                            "fecha": r.get("fecha", ""),
+                        }
         consultoras = [
-            {"consultora": nombre, "pct": pct, "gap": round(c["pct"] - pct, 1)}
-            for nombre, pct in sorted(consultoras_pct.items())
+            {"consultora": nombre, "pct": d["pct"], "gap": round(c["pct"] - d["pct"], 1),
+             "fuente_url": d.get("fuente_url"), "fuente_titulo": d.get("fuente_titulo"),
+             "fecha": d.get("fecha", "")}
+            for nombre, d in sorted(consultoras_data.items())
         ]
-        if consultoras_pct:
-            promedio = round(sum(consultoras_pct.values()) / len(consultoras_pct), 1)
+        if consultoras_data:
+            promedio = round(sum(d["pct"] for d in consultoras_data.values()) / len(consultoras_data), 1)
             gap_promedio = round(c["pct"] - promedio, 1)
         else:
             promedio, gap_promedio = None, None
