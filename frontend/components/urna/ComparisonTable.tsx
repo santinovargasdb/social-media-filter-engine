@@ -42,8 +42,10 @@ export default function ComparisonTable({ comparacion }: { comparacion: UrnaComp
                         {cell.pct}% <span style={{ color: gapColor(cell.gap), fontSize: "11px" }}>({fmt(cell.gap)})</span>
                         {cell.fuente_url && (
                           <a href={cell.fuente_url} target="_blank" rel="noopener noreferrer"
-                             title={`${cell.fuente_titulo || "fuente"}${cell.fecha ? " · " + cell.fecha : ""}`}
-                             style={{ marginLeft: "4px", fontSize: "11px", textDecoration: "none" }}>↗</a>
+                             title={`Ver fuente: ${cell.fuente_titulo || "fuente"}${cell.fecha ? " · " + cell.fecha : ""}`}
+                             style={{ marginLeft: "5px", fontSize: "12px", fontWeight: 700,
+                                      color: "var(--smata-green-light, #4CAF50)", textDecoration: "none",
+                                      cursor: "pointer" }}>↗</a>
                         )}
                       </>
                     ) : "—"}
@@ -57,7 +59,9 @@ export default function ComparisonTable({ comparacion }: { comparacion: UrnaComp
         </tbody>
       </table>
       <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "8px" }}>
-        Datos de consultoras extraídos de fuentes públicas — verificá en la fuente (↗).
+        Datos extraídos automáticamente de fuentes públicas. Tocá el{" "}
+        <span style={{ color: "var(--smata-green-light, #4CAF50)", fontWeight: 700 }}>↗</span>{" "}
+        que aparece junto a cada porcentaje para abrir la nota de origen y verificarlo.
       </p>
     </div>
   );
