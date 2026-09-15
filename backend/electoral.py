@@ -336,7 +336,7 @@ def compare_vs_pollsters(candidatos: list[dict], pollster_rows: list[dict]) -> t
     for cand_key, _consultoras_pct in por_candidato.items():
         if cand_key not in matched_csv_keys:
             nombre = next(r["candidato"] for r in pollster_rows if canonical_key(r["candidato"]) == cand_key)
-            warnings.append(f"'{nombre}' aparece en el CSV de consultoras pero no se detectó en redes.")
+            warnings.append(f"'{nombre}' aparece en los datos de consultoras pero no se detectó en redes.")
     return comparacion, warnings
 
 

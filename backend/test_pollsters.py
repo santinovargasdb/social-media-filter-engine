@@ -101,3 +101,24 @@ def test_fetch_pollster_rows_cachea(monkeypatch):
     n1 = llamadas["n"]
     p.fetch_pollster_rows(consultoras=["Opinaia"])  # cache HIT -> no re-busca
     assert llamadas["n"] == n1
+
+
+def test_map_espacio_a_candidato():
+    # Espacios/partidos -> candidato principal (mapeo editable).
+    assert p._map_espacio_a_candidato("La Libertad Avanza") == "Javier Milei"
+    assert p._map_espacio_a_candidato("Unión por la Patria") == "Axel Kicillof"
+    assert p._map_espacio_a_candidato("Frente de Izquierda") == "Myriam Bregman"
+    # Una persona (no está en el mapa) se devuelve tal cual.
+    assert p._map_espacio_a_candidato("Javier Milei") == "Javier Milei"
+    assert p._map_espacio_a_candidato("Candidato Desconocido") == "Candidato Desconocido"
+
+
+def test_parse_extraction_mapea_espacios_a_candidato():
+    parsed = [{"id": "Art_0", "fecha": "2026-09-01", "filas": [
+        {"candidato": "La Libertad Avanza", "porcentaje": 40},
+        {"candidato": "Frente de Izquierda", "porcentaje": "8,0"},
+    ]}]
+    articles = [{"url": "u", "title": "t", "text": "...", "date": "2026-09-01"}]
+    rows = p._parse_extraction(parsed, "Opinaia", articles)
+    nombres = sorted(r["candidato"] for r in rows)
+    assert nombres == ["Javier Milei", "Myriam Bregman"]  # espacios mapeados

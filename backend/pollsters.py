@@ -37,6 +37,48 @@ CONSULTORAS_DEFAULT = [
 # Descriptor de la elección para la query (editable, para no hardcodear el año).
 ELECCION_LABEL = "presidencial 2027"
 
+# Mapeo de ESPACIO/PARTIDO -> candidato principal (EDITABLE). En Argentina muchas
+# encuestas reportan por espacio ("La Libertad Avanza 40%") en vez de por candidato.
+# Con esto esos números se atribuyen al candidato que encabeza el espacio, para que
+# crucen contra los candidatos detectados en redes. Claves en clave canónica
+# (minúsculas, sin acentos). Editá los candidatos según la fórmula vigente.
+ESPACIO_A_CANDIDATO = {
+    # La Libertad Avanza / oficialismo
+    "la libertad avanza": "Javier Milei",
+    "lla": "Javier Milei",
+    "oficialismo": "Javier Milei",
+    "libertarios": "Javier Milei",
+    # Peronismo / Unión por la Patria / kirchnerismo
+    "union por la patria": "Axel Kicillof",
+    "uxp": "Axel Kicillof",
+    "peronismo": "Axel Kicillof",
+    "peronismo kirchnerista": "Axel Kicillof",
+    "peronismo k": "Axel Kicillof",
+    "kirchnerismo": "Axel Kicillof",
+    "fuerza patria": "Axel Kicillof",
+    # Frente de Izquierda (FIT-U)
+    "frente de izquierda": "Myriam Bregman",
+    "fit": "Myriam Bregman",
+    "fit-u": "Myriam Bregman",
+    "izquierda": "Myriam Bregman",
+    # Provincias Unidas / centro
+    "provincias unidas": "Juan Schiaretti",
+    # PRO / Juntos por el Cambio
+    "juntos por el cambio": "Patricia Bullrich",
+    "pro": "Mauricio Macri",
+    "propuesta republicana": "Mauricio Macri",
+    # UCR
+    "ucr": "Facundo Manes",
+    "union civica radical": "Facundo Manes",
+    "radicalismo": "Facundo Manes",
+}
+
+
+def _map_espacio_a_candidato(nombre: str) -> str:
+    """Si el nombre es un espacio/partido conocido, devuelve su candidato principal;
+    si no, lo devuelve tal cual (se asume que ya es una persona)."""
+    return ESPACIO_A_CANDIDATO.get(canonical_key(nombre), nombre)
+
 
 def _parse_pct(raw) -> float:
     """'42,5' | '42.5' | 42 -> float. Lanza ValueError/TypeError si no es numérico."""
@@ -58,6 +100,7 @@ def _parse_extraction(parsed: list, consultora: str, articles: list[dict]) -> li
             candidato = (fila.get("candidato") or "").strip()
             if not candidato:
                 continue
+            candidato = _map_espacio_a_candidato(candidato)  # espacio/partido -> candidato
             try:
                 pct = _parse_pct(fila.get("porcentaje"))
             except (TypeError, ValueError):
@@ -86,7 +129,10 @@ def _dedup_latest(rows: list[dict]) -> list[dict]:
 
 # ── Config de fetch ───────────────────────────────────────────────────────────
 ARTICULOS_POR_CONSULTORA = 2          # cuántas notas mirar por consultora
-POLLSTER_FETCH_CONCURRENCY = 5        # consultoras en paralelo
+# Consultoras en paralelo. Acotado a 3 (antes 5) para no gatillar el rate-limit del
+# free-tier de Gemini: cada consultora hace 1 llamada, y el análisis social ya usa
+# otras. 3 mantiene la latencia baja sin ráfagas de 5 llamadas simultáneas.
+POLLSTER_FETCH_CONCURRENCY = 3
 _ARTICLE_TIMEOUT = 15                 # seg por artículo
 _ARTICLE_MAX_CHARS = 8000            # tope de texto que ve Gemini por nota
 
@@ -128,8 +174,8 @@ Vas a recibir una lista de notas en JSON, cada una con un "id" ("Art_0", "Art_1"
 
 Por cada nota, extraé ÚNICAMENTE los porcentajes de intención de voto presidencial que la consultora "{consultora}" reporta de forma EXPLÍCITA en el texto. Reglas:
 1. Extraé solo números que estén literalmente en el texto. NO estimes ni inventes. Si la nota no trae porcentajes claros de esta consultora, devolvé "filas": [].
-2. "candidato": nombre COMPLETO y CANÓNICO de la persona (ej. "Milei" -> "Javier Milei").
-3. NO incluyas opciones que no son candidatos: "voto en blanco", "en blanco", "impugnado", "indeciso", "no sabe / no contesta", "ninguno", "otros".
+2. "candidato": el nombre de la persona candidata (COMPLETO y CANÓNICO, ej. "Milei" -> "Javier Milei"). Si la encuesta reporta por ESPACIO o PARTIDO en vez de por persona (ej. "La Libertad Avanza", "Unión por la Patria", "Frente de Izquierda", "Provincias Unidas"), devolvé el nombre del espacio/partido TAL CUAL (el sistema lo mapea al candidato que lo encabeza).
+3. NO incluyas opciones que no son ni candidato ni espacio político: "voto en blanco", "en blanco", "impugnado", "indeciso", "no sabe / no contesta", "ninguno", "otros".
 4. "fecha": fecha del sondeo en formato YYYY-MM-DD si aparece; si no, "".
 
 Devolvé ÚNICAMENTE un JSON válido (sin texto adicional ni bloques de código) que sea un ESPEJO EXACTO de los ids recibidos, uno por nota. Formato exacto:
