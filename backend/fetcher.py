@@ -304,11 +304,15 @@ def search_serpapi_web(
     query: str,
     max_results: int = 5,
     country: str = "ar",
+    tbs: str | None = None,
 ) -> list[dict] | None:
     """Búsqueda web GENERAL en Google vía SerpAPI (SIN filtro site:), para traer
     notas/artículos (p. ej. encuestas de consultoras). Devuelve lista de dicts
     {title, snippet, url, date}, [] si no hay resultados, o None ante error de
-    red/upstream (para no cachear vacíos espurios)."""
+    red/upstream (para no cachear vacíos espurios).
+
+    `tbs` (opcional) se pasa tal cual a SerpAPI: sirve para filtrar por fecha, p. ej.
+    'cdr:1,cd_min:05/18/2026,cd_max:09/15/2026' para acotar a un rango reciente."""
     if not SERPAPI_API_KEY:
         print("ERROR: SERPAPI_API_KEY no configurada en las variables de entorno.")
         return None
@@ -321,6 +325,8 @@ def search_serpapi_web(
         "hl": hl,
         "gl": gl,
     }
+    if tbs:
+        params["tbs"] = tbs
     data = _serpapi_get_with_geo_fallback(params, "web")
     if data is None:
         return None

@@ -167,3 +167,21 @@ def test_search_serpapi_web_upstream_none(monkeypatch):
     monkeypatch.setattr(fetcher, "SERPAPI_API_KEY", "k")
     monkeypatch.setattr(fetcher, "_serpapi_get_with_geo_fallback", lambda params, tag: None)
     assert fetcher.search_serpapi_web("q") is None
+
+
+def test_search_serpapi_web_pasa_tbs(monkeypatch):
+    import fetcher
+    captured = {}
+
+    def fake(params, tag):
+        captured.update(params)
+        return {"organic_results": []}
+
+    monkeypatch.setattr(fetcher, "SERPAPI_API_KEY", "k")
+    monkeypatch.setattr(fetcher, "_serpapi_get_with_geo_fallback", fake)
+    fetcher.search_serpapi_web("q", tbs="cdr:1,cd_min:05/18/2026,cd_max:09/15/2026")
+    assert captured.get("tbs") == "cdr:1,cd_min:05/18/2026,cd_max:09/15/2026"
+    # Sin tbs, no debe agregar la clave.
+    captured.clear()
+    fetcher.search_serpapi_web("q")
+    assert "tbs" not in captured

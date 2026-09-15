@@ -53,7 +53,7 @@ def test_fetch_pollster_rows_happy(monkeypatch):
     import fetcher, gemini_client as gc
     # 1 resultado por consultora, misma url; texto vía _fetch_article_text mockeado.
     monkeypatch.setattr(fetcher, "search_serpapi_web",
-                        lambda q, max_results=5, country="ar": [
+                        lambda q, max_results=5, country="ar", tbs=None: [
                             {"title": "Nota", "snippet": "s", "url": "https://n/x", "date": "2026-09-01"}])
     monkeypatch.setattr(p, "_fetch_article_text", lambda url: "texto con números")
     monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
@@ -71,7 +71,7 @@ def test_fetch_pollster_rows_happy(monkeypatch):
 def test_fetch_pollster_rows_una_consultora_sin_resultados(monkeypatch):
     import fetcher, gemini_client as gc
 
-    def fake_search(q, max_results=5, country="ar"):
+    def fake_search(q, max_results=5, country="ar", tbs=None):
         return [] if "Opinaia" in q else [{"title": "t", "snippet": "s", "url": "u", "date": ""}]
 
     monkeypatch.setattr(fetcher, "search_serpapi_web", fake_search)
@@ -88,7 +88,7 @@ def test_fetch_pollster_rows_cachea(monkeypatch):
     import fetcher, gemini_client as gc
     llamadas = {"n": 0}
 
-    def fake_search(q, max_results=5, country="ar"):
+    def fake_search(q, max_results=5, country="ar", tbs=None):
         llamadas["n"] += 1
         return [{"title": "t", "snippet": "s", "url": "u", "date": "2026-09-01"}]
 
@@ -122,3 +122,36 @@ def test_parse_extraction_mapea_espacios_a_candidato():
     rows = p._parse_extraction(parsed, "Opinaia", articles)
     nombres = sorted(r["candidato"] for r in rows)
     assert nombres == ["Javier Milei", "Myriam Bregman"]  # espacios mapeados
+
+
+def test_map_incluye_alias_provincias_unidos():
+    # Variante mal escrita ("Unidos" por "Unidas") también mapea.
+    assert p._map_espacio_a_candidato("Provincias Unidos") == "Juan Schiaretti"
+
+
+def test_recency_tbs_arma_rango_de_fechas():
+    import datetime
+    tbs = p._recency_tbs(120, today=datetime.date(2026, 9, 15))
+    assert tbs == "cdr:1,cd_min:05/18/2026,cd_max:09/15/2026"
+
+
+def test_fetch_pollster_rows_cae_a_busqueda_amplia_si_no_hay_recientes(monkeypatch):
+    """Primero busca con filtro de recencia; si eso viene vacío, reintenta SIN el
+    filtro (mejor una nota más vieja que ninguna)."""
+    import fetcher, gemini_client as gc
+    llamadas = []
+
+    def fake_search(q, max_results=5, country="ar", tbs=None):
+        llamadas.append(tbs)
+        # Con recencia (tbs presente) -> vacío; sin recencia -> devuelve una nota.
+        return [] if tbs else [{"title": "t", "snippet": "s", "url": "u", "date": "2026-01-10"}]
+
+    monkeypatch.setattr(fetcher, "search_serpapi_web", fake_search)
+    monkeypatch.setattr(p, "_fetch_article_text", lambda url: "texto")
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: (
+        [{"id": "Art_0", "filas": [{"candidato": "Javier Milei", "porcentaje": 40}]}], None))
+    p._CACHE.clear()
+    rows, warnings = p.fetch_pollster_rows(consultoras=["Opinaia"])
+    # Se hicieron 2 búsquedas: una con recencia (tbs) y el fallback sin tbs.
+    assert any(t for t in llamadas) and any(t is None for t in llamadas)
+    assert len(rows) == 1 and rows[0]["candidato"] == "Javier Milei"

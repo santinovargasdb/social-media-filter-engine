@@ -10,6 +10,7 @@ No habla con SerpAPI ni Gemini "a mano": fetch vía fetcher.search_serpapi_web,
 extracción vía gemini_client. `electoral` importa este módulo de forma diferida
 para evitar el ciclo (este módulo importa canonical_key de electoral).
 """
+import datetime
 import json
 import re
 import time
@@ -63,6 +64,7 @@ ESPACIO_A_CANDIDATO = {
     "izquierda": "Myriam Bregman",
     # Provincias Unidas / centro
     "provincias unidas": "Juan Schiaretti",
+    "provincias unidos": "Juan Schiaretti",  # variante mal escrita frecuente
     # PRO / Juntos por el Cambio
     "juntos por el cambio": "Patricia Bullrich",
     "pro": "Mauricio Macri",
@@ -129,6 +131,10 @@ def _dedup_latest(rows: list[dict]) -> list[dict]:
 
 # ── Config de fetch ───────────────────────────────────────────────────────────
 ARTICULOS_POR_CONSULTORA = 2          # cuántas notas mirar por consultora
+# Ventana de recencia: la búsqueda prioriza notas de los últimos N días (encuestas
+# frescas). Si no hay nada reciente, cae a búsqueda amplia (mejor una nota vieja,
+# claramente fechada, que ninguna). Editable.
+RECENCY_DAYS = 120
 # Consultoras en paralelo. Acotado a 3 (antes 5) para no gatillar el rate-limit del
 # free-tier de Gemini: cada consultora hace 1 llamada, y el análisis social ya usa
 # otras. 3 mantiene la latencia baja sin ráfagas de 5 llamadas simultáneas.
@@ -177,6 +183,7 @@ Por cada nota, extraé ÚNICAMENTE los porcentajes de intención de voto preside
 2. "candidato": el nombre de la persona candidata (COMPLETO y CANÓNICO, ej. "Milei" -> "Javier Milei"). Si la encuesta reporta por ESPACIO o PARTIDO en vez de por persona (ej. "La Libertad Avanza", "Unión por la Patria", "Frente de Izquierda", "Provincias Unidas"), devolvé el nombre del espacio/partido TAL CUAL (el sistema lo mapea al candidato que lo encabeza).
 3. NO incluyas opciones que no son ni candidato ni espacio político: "voto en blanco", "en blanco", "impugnado", "indeciso", "no sabe / no contesta", "ninguno", "otros".
 4. "fecha": fecha del sondeo en formato YYYY-MM-DD si aparece; si no, "".
+5. Si la nota muestra VARIOS escenarios, preguntas o métricas, tomá SOLO la INTENCIÓN DE VOTO presidencial PRINCIPAL (primera vuelta, escenario general). IGNORÁ imagen/conocimiento, diferencial, aprobación de gestión, balotaje hipotético y sub-muestras (por provincia, edad, etc.). Asegurate además de que el número sea de la consultora "{consultora}" y no de otra consultora que la nota pueda citar.
 
 Devolvé ÚNICAMENTE un JSON válido (sin texto adicional ni bloques de código) que sea un ESPEJO EXACTO de los ids recibidos, uno por nota. Formato exacto:
 [
@@ -187,11 +194,27 @@ Notas a procesar:
 {items_text}"""
 
 
+def _recency_tbs(days: int, today: datetime.date | None = None) -> str:
+    """Arma el parámetro 'tbs' de SerpAPI para acotar Google a los últimos `days`
+    días (formato de rango de fechas MM/DD/YYYY)."""
+    today = today or datetime.date.today()
+    cd_min = today - datetime.timedelta(days=days)
+    return f"cdr:1,cd_min:{cd_min.strftime('%m/%d/%Y')},cd_max:{today.strftime('%m/%d/%Y')}"
+
+
 def _fetch_one_consultora(consultora: str, country: str) -> tuple[list[dict], list[str]]:
     query = f'"{consultora}" encuesta intención de voto {ELECCION_LABEL}'
-    resultados = fetcher.search_serpapi_web(query, max_results=ARTICULOS_POR_CONSULTORA, country=country)
+    # Priorizar notas recientes; si no hay, caer a búsqueda amplia.
+    resultados = fetcher.search_serpapi_web(
+        query, max_results=ARTICULOS_POR_CONSULTORA, country=country,
+        tbs=_recency_tbs(RECENCY_DAYS))
     if resultados is None:
         return [], [f"{consultora}: el buscador no respondió."]
+    if not resultados:
+        resultados = fetcher.search_serpapi_web(
+            query, max_results=ARTICULOS_POR_CONSULTORA, country=country)
+        if resultados is None:
+            return [], [f"{consultora}: el buscador no respondió."]
     if not resultados:
         return [], [f"No se encontraron encuestas recientes de {consultora}."]
     articles = []
