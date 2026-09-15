@@ -11,7 +11,10 @@ export interface UrnaPost {
 export interface UrnaEvidencia {
   candidato: string; postura: Postura; cita: string; post: UrnaPost;
 }
-export interface UrnaConsultora { consultora: string; pct: number; gap: number; }
+export interface UrnaConsultora {
+  consultora: string; pct: number; gap: number;
+  fuente_url?: string; fuente_titulo?: string; fecha?: string;
+}
 export interface UrnaComparacion {
   candidato: string; redes_pct: number; consultoras: UrnaConsultora[];
   promedio_consultoras: number | null; gap_promedio: number | null;
@@ -24,7 +27,8 @@ export interface UrnaResponse {
   comparacion: UrnaComparacion[]; meta: UrnaMeta;
 }
 export interface UrnaRequest {
-  keywords: string[]; networks: string[]; date: string | null; country: string; pollster_csv: string;
+  keywords: string[]; networks: string[]; date: string | null; country: string;
+  pollster_csv: string; auto_consultoras: boolean;
 }
 
 export type UrnaStatus = "connecting" | "waking";

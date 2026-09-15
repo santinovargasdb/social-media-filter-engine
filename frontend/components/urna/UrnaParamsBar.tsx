@@ -15,6 +15,7 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
   const [csvText, setCsvText] = useState("");
   const [csvName, setCsvName] = useState("");
   const [csvRows, setCsvRows] = useState(0);
+  const [autoConsultoras, setAutoConsultoras] = useState(false);
 
   const handleCsv = (file: File | null) => {
     if (!file) { setCsvText(""); setCsvName(""); setCsvRows(0); return; }
@@ -36,6 +37,7 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
       date: date || null,
       country: country.trim().toLowerCase() || "ar",
       pollster_csv: csvText,
+      auto_consultoras: autoConsultoras,
     });
   };
 
@@ -61,6 +63,12 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
                onChange={(e) => handleCsv(e.target.files?.[0] || null)} />
       </label>
       {csvName && <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{csvName} · {csvRows} filas</span>}
+      <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px",
+                      color: "var(--text-secondary)", cursor: "pointer" }}>
+        <input type="checkbox" checked={autoConsultoras}
+               onChange={(e) => setAutoConsultoras(e.target.checked)} />
+        ⟳ Traer consultoras automáticamente
+      </label>
       <button className="btn" disabled={loading} onClick={submit}
               style={{ background: "var(--smata-green-mid, #2E7D32)", color: "#fff", padding: "8px 16px",
                        fontSize: "13px", opacity: loading ? 0.6 : 1 }}>

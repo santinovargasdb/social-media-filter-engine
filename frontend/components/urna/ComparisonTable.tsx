@@ -37,7 +37,16 @@ export default function ComparisonTable({ comparacion }: { comparacion: UrnaComp
                 const cell = row.consultoras.find((x) => x.consultora === name);
                 return (
                   <td key={name} style={td}>
-                    {cell ? <>{cell.pct}% <span style={{ color: gapColor(cell.gap), fontSize: "11px" }}>({fmt(cell.gap)})</span></> : "—"}
+                    {cell ? (
+                      <>
+                        {cell.pct}% <span style={{ color: gapColor(cell.gap), fontSize: "11px" }}>({fmt(cell.gap)})</span>
+                        {cell.fuente_url && (
+                          <a href={cell.fuente_url} target="_blank" rel="noopener noreferrer"
+                             title={`${cell.fuente_titulo || "fuente"}${cell.fecha ? " · " + cell.fecha : ""}`}
+                             style={{ marginLeft: "4px", fontSize: "11px", textDecoration: "none" }}>↗</a>
+                        )}
+                      </>
+                    ) : "—"}
                   </td>
                 );
               })}
@@ -47,6 +56,9 @@ export default function ComparisonTable({ comparacion }: { comparacion: UrnaComp
           ))}
         </tbody>
       </table>
+      <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "8px" }}>
+        Datos de consultoras extraídos de fuentes públicas — verificá en la fuente (↗).
+      </p>
     </div>
   );
 }
