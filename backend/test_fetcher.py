@@ -139,3 +139,31 @@ def test_serpapi_geo_fallback_todo_falla_devuelve_none(monkeypatch):
 
     monkeypatch.setattr(ft.requests, "get", fake_get)
     assert ft.search_serpapi("noticias", network="twitter", country="jp") is None
+
+
+def test_search_serpapi_web_parsea_organicos(monkeypatch):
+    import fetcher
+    fake = {"organic_results": [
+        {"title": "Encuesta X", "snippet": "Milei 36%", "link": "https://n/1", "date": "2026-08-01"},
+        {"title": "Nota Y", "snippet": "Kicillof 32%", "link": "https://n/2", "date": ""},
+    ]}
+    monkeypatch.setattr(fetcher, "SERPAPI_API_KEY", "test-key")
+    monkeypatch.setattr(fetcher, "_serpapi_get_with_geo_fallback", lambda params, tag: fake)
+    out = fetcher.search_serpapi_web("Opinaia encuesta", max_results=5, country="ar")
+    assert out == [
+        {"title": "Encuesta X", "snippet": "Milei 36%", "url": "https://n/1", "date": "2026-08-01"},
+        {"title": "Nota Y", "snippet": "Kicillof 32%", "url": "https://n/2", "date": ""},
+    ]
+
+
+def test_search_serpapi_web_sin_key_devuelve_none(monkeypatch):
+    import fetcher
+    monkeypatch.setattr(fetcher, "SERPAPI_API_KEY", "")
+    assert fetcher.search_serpapi_web("q") is None
+
+
+def test_search_serpapi_web_upstream_none(monkeypatch):
+    import fetcher
+    monkeypatch.setattr(fetcher, "SERPAPI_API_KEY", "k")
+    monkeypatch.setattr(fetcher, "_serpapi_get_with_geo_fallback", lambda params, tag: None)
+    assert fetcher.search_serpapi_web("q") is None

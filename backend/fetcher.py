@@ -298,3 +298,42 @@ def search_serpapi(
         results = _filter_results_by_date(results, fecha_desde, network)
     print(f"DEBUG: SerpAPI[{network}] devolvió {len(results)} resultados útiles para '{termino}'.")
     return results
+
+
+def search_serpapi_web(
+    query: str,
+    max_results: int = 5,
+    country: str = "ar",
+) -> list[dict] | None:
+    """Búsqueda web GENERAL en Google vía SerpAPI (SIN filtro site:), para traer
+    notas/artículos (p. ej. encuestas de consultoras). Devuelve lista de dicts
+    {title, snippet, url, date}, [] si no hay resultados, o None ante error de
+    red/upstream (para no cachear vacíos espurios)."""
+    if not SERPAPI_API_KEY:
+        print("ERROR: SERPAPI_API_KEY no configurada en las variables de entorno.")
+        return None
+    gl, hl = _geo_params(country)
+    params = {
+        "engine": "google",
+        "q": query,
+        "api_key": SERPAPI_API_KEY,
+        "num": max_results,
+        "hl": hl,
+        "gl": gl,
+    }
+    data = _serpapi_get_with_geo_fallback(params, "web")
+    if data is None:
+        return None
+    organic_results = data.get("organic_results", [])
+    if not organic_results:
+        print(f"DEBUG: SerpAPI[web] sin resultados orgánicos para '{query}'.")
+        return []
+    out: list[dict] = []
+    for item in organic_results[:max_results]:
+        out.append({
+            "title": item.get("title", ""),
+            "snippet": item.get("snippet", ""),
+            "url": item.get("link", ""),
+            "date": item.get("date", ""),
+        })
+    return out
