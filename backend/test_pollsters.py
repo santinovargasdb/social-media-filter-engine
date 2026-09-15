@@ -47,3 +47,57 @@ def test_dedup_latest_conserva_fecha_mas_reciente():
     ]
     out = p._dedup_latest(rows)
     assert len(out) == 1 and out[0]["porcentaje"] == 42.0 and out[0]["fuente_url"] == "u2"
+
+
+def test_fetch_pollster_rows_happy(monkeypatch):
+    import fetcher, gemini_client as gc
+    # 1 resultado por consultora, misma url; texto vía _fetch_article_text mockeado.
+    monkeypatch.setattr(fetcher, "search_serpapi_web",
+                        lambda q, max_results=5, country="ar": [
+                            {"title": "Nota", "snippet": "s", "url": "https://n/x", "date": "2026-09-01"}])
+    monkeypatch.setattr(p, "_fetch_article_text", lambda url: "texto con números")
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
+        {"id": "Art_0", "fecha": "2026-09-01",
+         "filas": [{"candidato": "Javier Milei", "porcentaje": 36.3}]},
+    ], None))
+    p._CACHE.clear()
+    rows, warnings = p.fetch_pollster_rows(consultoras=["Opinaia", "CB Consultora"])
+    # Una fila por consultora (misma url pero distinta consultora -> no se pisan).
+    consultoras = sorted(r["consultora"] for r in rows)
+    assert consultoras == ["CB Consultora", "Opinaia"]
+    assert all(r["fuente_url"] == "https://n/x" and r["candidato"] == "Javier Milei" for r in rows)
+
+
+def test_fetch_pollster_rows_una_consultora_sin_resultados(monkeypatch):
+    import fetcher, gemini_client as gc
+
+    def fake_search(q, max_results=5, country="ar"):
+        return [] if "Opinaia" in q else [{"title": "t", "snippet": "s", "url": "u", "date": ""}]
+
+    monkeypatch.setattr(fetcher, "search_serpapi_web", fake_search)
+    monkeypatch.setattr(p, "_fetch_article_text", lambda url: "texto")
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: (
+        [{"id": "Art_0", "filas": [{"candidato": "Milei", "porcentaje": 40}]}], None))
+    p._CACHE.clear()
+    rows, warnings = p.fetch_pollster_rows(consultoras=["Opinaia", "CB Consultora"])
+    assert [r["consultora"] for r in rows] == ["CB Consultora"]
+    assert any("Opinaia" in w for w in warnings)
+
+
+def test_fetch_pollster_rows_cachea(monkeypatch):
+    import fetcher, gemini_client as gc
+    llamadas = {"n": 0}
+
+    def fake_search(q, max_results=5, country="ar"):
+        llamadas["n"] += 1
+        return [{"title": "t", "snippet": "s", "url": "u", "date": "2026-09-01"}]
+
+    monkeypatch.setattr(fetcher, "search_serpapi_web", fake_search)
+    monkeypatch.setattr(p, "_fetch_article_text", lambda url: "texto")
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: (
+        [{"id": "Art_0", "filas": [{"candidato": "Milei", "porcentaje": 40}]}], None))
+    p._CACHE.clear()
+    p.fetch_pollster_rows(consultoras=["Opinaia"])
+    n1 = llamadas["n"]
+    p.fetch_pollster_rows(consultoras=["Opinaia"])  # cache HIT -> no re-busca
+    assert llamadas["n"] == n1
