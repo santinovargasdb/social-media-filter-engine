@@ -356,8 +356,19 @@ def build_candidate_search_list(pollster_rows: list[dict]) -> list[str]:
     return nombres
 
 
+def _merge_pollster_rows(auto_rows: list[dict], manual_rows: list[dict]) -> list[dict]:
+    """Une filas automáticas (con fuente) y del CSV. El CSV PISA al automático en
+    conflicto (consultora, candidato canónico): es el dato vetado a mano."""
+    merged: dict[tuple, dict] = {}
+    for r in auto_rows:
+        merged[(r["consultora"].strip().lower(), canonical_key(r["candidato"]))] = r
+    for r in manual_rows:
+        merged[(r["consultora"].strip().lower(), canonical_key(r["candidato"]))] = r
+    return list(merged.values())
+
+
 def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
-                     country: str, pollster_csv: str) -> dict:
+                     country: str, pollster_csv: str, auto_consultoras: bool = False) -> dict:
     """Orquesta la boca de urna. Arma el corpus con una búsqueda general MÁS una
     búsqueda dedicada por cada candidato (para captar varias opiniones), corre el
     análisis electoral y arma el payload. Lanza UpstreamUnavailableError
@@ -365,6 +376,14 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
     # 1) CSV primero: si el header es inválido, cortamos con ValueError (-> 400).
     pollster_rows, csv_warnings = parse_pollster_csv(pollster_csv)
     warnings = list(csv_warnings)
+
+    # Consultoras automáticas (opcional): trae filas con fuente y las mergea con el
+    # CSV. El CSV pisa al automático. Import diferido para evitar el ciclo con pollsters.
+    if auto_consultoras:
+        import pollsters
+        auto_rows, auto_warnings = pollsters.fetch_pollster_rows(fecha_desde=date, country=country)
+        warnings.extend(auto_warnings)
+        pollster_rows = _merge_pollster_rows(auto_rows, pollster_rows)
 
     # 2) Corpus: búsqueda general + UNA por candidato (lista fija ∪ CSV), SIN el
     #    filtro de relevancia del monitor (fetch_raw_posts). El clasificador

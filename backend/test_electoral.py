@@ -381,3 +381,32 @@ def test_compare_sin_fuente_csv_no_rompe():
     comp, _w = el.compare_vs_pollsters(candidatos, rows)
     cell = comp[0]["consultoras"][0]
     assert cell["pct"] == 42.0 and cell.get("fuente_url") is None
+
+
+def test_merge_pollster_rows_csv_pisa_auto():
+    auto = [{"consultora": "Opinaia", "fecha": "2026-09-01", "candidato": "Javier Milei",
+             "porcentaje": 40.0, "fuente_url": "u", "fuente_titulo": "t"}]
+    manual = [{"consultora": "Opinaia", "fecha": "2026-08-01", "candidato": "javier milei",
+               "porcentaje": 48.0}]  # misma consultora+candidato -> pisa
+    out = el._merge_pollster_rows(auto, manual)
+    assert len(out) == 1 and out[0]["porcentaje"] == 48.0
+
+
+def test_run_boca_auto_consultoras_llena_comparacion(monkeypatch):
+    import normalizer, gemini_client as gc, pollsters
+    posts = [{"id": "1", "network": "twitter", "author": "", "author_url": "", "text": "Milei",
+              "date": "", "post_url": "u1", "relevance_score": 80, "relevance_level": "alta",
+              "matched_terms": [], "video_url": None}]
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: (posts, False))
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
+        {"id": "Post_0", "es_electoral": True, "cita": "Milei",
+         "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]},
+    ], None))
+    monkeypatch.setattr(pollsters, "fetch_pollster_rows", lambda **kw: ([
+        {"consultora": "Opinaia", "fecha": "2026-09-01", "candidato": "Javier Milei",
+         "porcentaje": 41.0, "fuente_url": "https://n/1", "fuente_titulo": "Nota"}], []))
+    out = el.run_boca_de_urna(keywords=["elecciones"], networks=["twitter"], date=None,
+                              country="ar", pollster_csv="", auto_consultoras=True)
+    milei = next(c for c in out["comparacion"]
+                 if el.canonical_key(c["candidato"]) == el.canonical_key("Javier Milei"))
+    assert milei["consultoras"][0]["fuente_url"] == "https://n/1"
