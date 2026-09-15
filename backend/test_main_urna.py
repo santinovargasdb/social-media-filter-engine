@@ -38,3 +38,16 @@ def test_endpoint_upstream_es_503(monkeypatch):
     with pytest.raises(HTTPException) as ei:
         asyncio.run(main.boca_de_urna_endpoint(_req()))
     assert ei.value.status_code == 503
+
+
+def test_endpoint_pasa_auto_consultoras(monkeypatch):
+    capturado = {}
+
+    def fake_run(**kw):
+        capturado.update(kw)
+        return {"candidatos": [], "evidencia": [], "comparacion": [],
+                "meta": {"total_posts": 0, "posts_electorales": 0, "disclaimer": "x", "warnings": []}}
+
+    monkeypatch.setattr(electoral, "run_boca_de_urna", fake_run)
+    asyncio.run(main.boca_de_urna_endpoint(_req(auto_consultoras=True)))
+    assert capturado["auto_consultoras"] is True

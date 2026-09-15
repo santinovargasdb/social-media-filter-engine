@@ -136,6 +136,7 @@ class BocaDeUrnaRequest(BaseModel):
     date: Optional[str] = None
     country: str = "ar"
     pollster_csv: str = ""
+    auto_consultoras: bool = False
 
 
 @app.post("/api/boca-de-urna")
@@ -151,6 +152,7 @@ async def boca_de_urna_endpoint(request: BocaDeUrnaRequest):
             date=request.date,
             country=(request.country or "ar").strip().lower(),
             pollster_csv=request.pollster_csv,
+            auto_consultoras=request.auto_consultoras,
         )
     except HTTPException:
         raise
