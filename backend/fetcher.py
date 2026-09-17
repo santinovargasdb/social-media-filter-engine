@@ -52,22 +52,23 @@ _SITE_BY_NETWORK = {
 }
 
 
-def _date_to_qdr(fecha_desde: str | None) -> str | None:
-    """Mapea YYYY-MM-DD a un valor qdr de SerpAPI (d/w/m) según antigüedad."""
+def _date_to_tbs(fecha_desde: str | None, today: datetime.date | None = None) -> str | None:
+    """Mapea YYYY-MM-DD a un RANGO de fechas de SerpAPI (tbs=cdr:1,cd_min,cd_max),
+    acotando Google desde `fecha_desde` hasta hoy a CUALQUIER antigüedad. El qdr
+    grueso de SerpAPI solo soporta día/semana/mes: pasados 31 días se caía a "sin
+    filtro", así que ampliar el plazo (p. ej. a 9 meses) no cambiaba la búsqueda.
+    El rango cd_min/cd_max sí filtra de verdad a meses/años. None si no hay fecha,
+    es inválida o es futura (rango invertido)."""
     if not fecha_desde:
         return None
     try:
         d = datetime.date.fromisoformat(fecha_desde)
     except ValueError:
         return None
-    delta_days = (datetime.date.today() - d).days
-    if delta_days <= 0:
-        return "d"
-    if delta_days <= 7:
-        return "w"
-    if delta_days <= 31:
-        return "m"
-    return None
+    today = today or datetime.date.today()
+    if d > today:
+        return None
+    return f"cdr:1,cd_min:{d.strftime('%m/%d/%Y')},cd_max:{today.strftime('%m/%d/%Y')}"
 
 
 # ── C.1 · Hard-stop de fechas (best-effort) para IG/TikTok ────────────────────
@@ -237,11 +238,15 @@ def search_serpapi(
     fecha_desde: str | None = None,
     accounts: list[str] | None = None,
     country: str = "ar",
+    pages: int = 1,
 ) -> list[dict] | None:
     """
     Busca en Google vía SerpAPI con `site:` correspondiente a la red.
     `country` es el código ISO 3166-1 alpha-2 que se pasa como 'gl' para forzar
     resultados nativos de esa región (B.4).
+    `pages` = cuántas páginas de `max_results` traer (paginación con `start`): con
+    pages=1 se trae solo la primera página (~10 resultados), que era el techo por el
+    que ampliar el plazo no sumaba posts; con pages>1 se piden páginas sucesivas.
     Devuelve lista de dicts {title, snippet, url, date}, [] si no hay resultados,
     o None ante errores de red/upstream (para no cachear vacíos espurios).
     """
@@ -259,7 +264,7 @@ def search_serpapi(
             query_parts.append(accounts_filter)
     query = " ".join(query_parts)
     gl, hl = _geo_params(country)
-    params = {
+    base_params = {
         "engine": "google",
         "q": query,
         "api_key": SERPAPI_API_KEY,
@@ -267,27 +272,40 @@ def search_serpapi(
         "hl": hl,
         "gl": gl,
     }
-    qdr = _date_to_qdr(fecha_desde)
-    if qdr:
-        params["tbs"] = f"qdr:{qdr}"
+    # Rango de fechas real (cd_min/cd_max) para que el 'desde' filtre a cualquier
+    # antigüedad, no el qdr grueso que se caía a "sin filtro" pasados 31 días.
+    tbs = _date_to_tbs(fecha_desde)
+    if tbs:
+        base_params["tbs"] = tbs
 
-    data = _serpapi_get_with_geo_fallback(params, network)
-    if data is None:
-        return None
+    # Paginación: acumula hasta `pages` páginas. Corta al primer error de red (None)
+    # o página vacía. Un error en la 1ª página se propaga como None (igual que antes);
+    # si ya juntamos algo, devolvemos lo acumulado.
+    raw_results: list[dict] = []
+    for page in range(max(1, pages)):
+        params = dict(base_params)
+        if page > 0:
+            params["start"] = page * max_results
+        data = _serpapi_get_with_geo_fallback(params, network)
+        if data is None:
+            if page == 0:
+                return None
+            break
+        organic_results = data.get("organic_results", [])
+        if not organic_results:
+            break
+        for item in organic_results[:max_results]:
+            raw_results.append({
+                "title": item.get("title", ""),
+                "snippet": item.get("snippet", ""),
+                "url": item.get("link", ""),
+                "date": item.get("date", ""),
+            })
 
-    organic_results = data.get("organic_results", [])
-    if not organic_results:
+    if not raw_results:
         print(f"DEBUG: SerpAPI[{network}] sin resultados orgánicos para '{termino}'.")
         return []
 
-    raw_results = []
-    for item in organic_results[:max_results]:
-        raw_results.append({
-            "title": item.get("title", ""),
-            "snippet": item.get("snippet", ""),
-            "url": item.get("link", ""),
-            "date": item.get("date", ""),
-        })
     results = _clean_serp_results(raw_results)
     if len(results) != len(raw_results):
         print(f"DEBUG: SerpAPI[{network}] limpieza: {len(raw_results)} -> {len(results)} (vacíos/duplicados descartados)")

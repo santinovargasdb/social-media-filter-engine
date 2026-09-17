@@ -11,6 +11,25 @@ import normalizer as nz
 import gemini_client as gc
 
 
+# ── fetch_posts: paginación del monitor ───────────────────────────────────────
+def test_fetch_posts_pagina_para_traer_mas(monkeypatch):
+    """El monitor debe pedir varias páginas por red (no solo la primera ~10): ese
+    techo era lo que hacía que ampliar el plazo de 2 a 9 meses casi no sumara posts."""
+    llamadas = []
+
+    def fake_search(termino, network, max_results=10, fecha_desde=None,
+                    accounts=None, country="ar", pages=1):
+        llamadas.append(pages)
+        return [{"title": "t", "snippet": "SMATA",
+                 "url": f"https://x.com/u/status/{network}", "date": ""}]
+
+    monkeypatch.setattr(nz, "search_serpapi", fake_search)
+    monkeypatch.setattr(nz, "_process_with_gemini", lambda serp, termino, smata_mode, keywords: [])
+    nz._CACHE.clear()
+    nz.fetch_posts("smata", networks=["twitter"])
+    assert llamadas and all(pp > 1 for pp in llamadas)  # pidió más de una página
+
+
 # ── _is_specific_post_url ─────────────────────────────────────────────────────
 def test_is_specific_post_url_instagram():
     assert nz._is_specific_post_url("instagram", "https://www.instagram.com/p/Cabc/")
@@ -296,7 +315,7 @@ def test_fetch_posts_fallback_red_por_red(monkeypatch):
     # Neutralizamos la Capa de Traducción para no pegarle a la red en este test.
     monkeypatch.setattr(nz, "_translate_query_for_country", lambda t, c: t)
 
-    def fake_serp(termino, network, max_results, fecha_desde, accounts, country):
+    def fake_serp(termino, network, max_results, fecha_desde, accounts, country, pages=1):
         return [{"title": "t", "snippet": "s", "url": f"https://x/{network}", "date": ""}]
 
     def fake_proc(resultados, termino, smata_mode, keywords):
@@ -318,7 +337,7 @@ def test_fetch_posts_fallback_parcial_no_rompe(monkeypatch):
     nz._CACHE.clear()
     monkeypatch.setattr(nz, "_translate_query_for_country", lambda t, c: t)
 
-    def fake_serp(termino, network, max_results, fecha_desde, accounts, country):
+    def fake_serp(termino, network, max_results, fecha_desde, accounts, country, pages=1):
         return [{"title": "t", "snippet": "s", "url": f"https://x/{network}", "date": ""}]
 
     def fake_proc(resultados, termino, smata_mode, keywords):
@@ -342,7 +361,7 @@ def test_fetch_posts_traduce_para_pais_no_hispano(monkeypatch):
                         lambda t, c: "労働組合" if c == "jp" else t)
     capturado = {}
 
-    def fake_serp(termino, network, max_results, fecha_desde, accounts, country):
+    def fake_serp(termino, network, max_results, fecha_desde, accounts, country, pages=1):
         capturado["termino"] = termino
         return [{"title": "t", "snippet": "s", "url": f"https://x/{network}", "date": ""}]
 

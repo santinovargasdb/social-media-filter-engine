@@ -34,18 +34,54 @@ def test_clean_serp_descarta_sin_texto_y_dedup():
     assert urls == ["u1", "u4"]
 
 
-# ── _date_to_qdr ──────────────────────────────────────────────────────────────
-def test_date_to_qdr_none_y_invalida():
-    assert ft._date_to_qdr(None) is None
-    assert ft._date_to_qdr("no-es-fecha") is None
+# ── _date_to_tbs (rango de fechas real, cualquier antigüedad) ─────────────────
+def test_date_to_tbs_rango_para_cualquier_antiguedad():
+    # 9 meses atrás -> rango cd_min..cd_max (no "sin filtro", como pasaba con el qdr).
+    tbs = ft._date_to_tbs("2026-01-17", today=datetime.date(2026, 9, 17))
+    assert tbs == "cdr:1,cd_min:01/17/2026,cd_max:09/17/2026"
 
 
-def test_date_to_qdr_rangos():
-    hoy = datetime.date.today()
-    assert ft._date_to_qdr(hoy.isoformat()) == "d"
-    assert ft._date_to_qdr((hoy - datetime.timedelta(days=5)).isoformat()) == "w"
-    assert ft._date_to_qdr((hoy - datetime.timedelta(days=20)).isoformat()) == "m"
-    assert ft._date_to_qdr((hoy - datetime.timedelta(days=200)).isoformat()) is None
+def test_date_to_tbs_none_invalida_y_futura():
+    assert ft._date_to_tbs(None) is None
+    assert ft._date_to_tbs("no-es-fecha") is None
+    # Fecha futura -> None (no tiene sentido un rango invertido).
+    assert ft._date_to_tbs("2027-01-01", today=datetime.date(2026, 9, 17)) is None
+
+
+def test_search_serpapi_usa_rango_de_fechas_para_plazo_largo(monkeypatch):
+    """Un 'desde' de 9 meses debe traducirse a un rango de fechas real (cd_min/cd_max),
+    no descartarse — que era la causa de que ampliar el plazo no cambiara nada."""
+    captured = {}
+
+    def fake(params, tag):
+        captured.update(params)
+        return {"organic_results": []}
+
+    monkeypatch.setattr(ft, "SERPAPI_API_KEY", "k")
+    monkeypatch.setattr(ft, "_serpapi_get_with_geo_fallback", fake)
+    hace9meses = (datetime.date.today() - datetime.timedelta(days=270)).isoformat()
+    ft.search_serpapi("smata", network="twitter", fecha_desde=hace9meses)
+    assert captured.get("tbs", "").startswith("cdr:1,cd_min:")
+
+
+def test_search_serpapi_pagina_multiples_paginas(monkeypatch):
+    """Con pages>1 debe pedir páginas sucesivas (start=0,10,20…) y acumular, en vez
+    de traer solo los primeros ~10 (el techo que hacía que 9 meses ≈ 2 meses)."""
+    monkeypatch.setattr(ft, "SERPAPI_API_KEY", "k")
+    starts = []
+
+    def fake(params, tag):
+        idx = params.get("start", 0)
+        starts.append(idx)
+        if idx >= 20:  # tercera página vacía -> corta
+            return {"organic_results": []}
+        return {"organic_results": [
+            {"title": f"t{idx}", "snippet": f"s{idx}", "link": f"https://x/{idx}", "date": ""}]}
+
+    monkeypatch.setattr(ft, "_serpapi_get_with_geo_fallback", fake)
+    out = ft.search_serpapi("q", network="twitter", pages=3)
+    assert starts == [0, 10, 20]     # paginó hasta encontrar la página vacía
+    assert len(out) == 2             # acumuló las dos páginas con resultados
 
 
 # ── B.4 · _geo_params ─────────────────────────────────────────────────────────

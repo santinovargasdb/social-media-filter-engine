@@ -47,9 +47,17 @@ _NETWORK_PROMPT_LABEL = {
     "tiktok": "TikTok",
 }
 
-# Tope de resultados por red que se mandan a Gemini para reducir tokens
-# y bajar la chance de tocar el rate limit con multi-red activo.
-GEMINI_MAX_PER_NETWORK = 8
+# Tope de resultados por red que se mandan a Gemini. Balancea volumen vs. tokens /
+# rate limit del free-tier / timeout de 120s. Subido de 8 a 20 ("Moderado") para
+# mostrar bastante más contenido: si el batch combinado se pasa de tiempo, ya hay
+# fallback red-por-red aguas abajo.
+GEMINI_MAX_PER_NETWORK = 20
+
+# Páginas de SerpAPI a traer por red en el monitor (paginación). ~10 resultados por
+# página; 3 páginas => hasta ~30 crudos por red, de los que se puntúan hasta
+# GEMINI_MAX_PER_NETWORK. Antes era 1 sola página: ese techo hacía que ampliar el
+# plazo casi no sumara posts. Editable.
+SERP_PAGES_MONITOR = 3
 
 # ── Piso de score por red ─────────────────────────────────────────────────────
 # Se aplica como filtro duro en Python después del scoring de Gemini.
@@ -663,6 +671,7 @@ def fetch_posts(
             fecha_desde=fecha_desde,
             accounts=accounts,
             country=country,
+            pages=SERP_PAGES_MONITOR,
         )
         if resultados is None:
             any_upstream_error = True
