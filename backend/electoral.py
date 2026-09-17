@@ -14,6 +14,7 @@ import io
 import json
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 import gemini_client
 import normalizer
@@ -104,6 +105,43 @@ ELECTORAL_BATCH_CONCURRENCY = 1
 # quedarse sin buscarlos).
 CANDIDATE_NETWORKS = ("twitter",)
 
+# ── Bloques por red (X / Instagram / TikTok) ──────────────────────────────────
+# Cada red se procesa como un BLOQUE autónomo: sus propias búsquedas, su propio
+# contexto de clasificación, y su propia verificación. Contexto que se le pasa a
+# Gemini por red (una publicación de X no se lee igual que un reel de IG o un TikTok).
+NETWORK_CONTEXT = {
+    "twitter": ("Son posts de X (Twitter): texto político directo, muchas veces con "
+                "opinión explícita, ironía, chicanas o respuestas. La señal suele estar "
+                "clara en el texto."),
+    "instagram": ("Son publicaciones de Instagram: foto o reel con epígrafe y hashtags. "
+                  "El texto disponible es el epígrafe (suele ser de campaña o promocional); "
+                  "inferí la postura del epígrafe y los hashtags."),
+    "tiktok": ("Son videos de TikTok: descripción corta con hashtags. El texto es breve; "
+               "apoyate en los hashtags y el tono. Ignorá descripciones que sean solo "
+               "música o etiquetas sin contenido político."),
+}
+
+# Presupuesto de búsqueda por red (páginas de SerpAPI). Enfoca profundidad en los
+# candidatos top (para acercarse a ~80 en el mejor posicionado) y cubre al resto más
+# superficial. `top_n` candidatos reciben `top_pages`; el resto `rest_pages` (0 = no se
+# busca individual en esa red, lo cubre la general). Con las 3 redes ≈ 31 búsquedas/
+# análisis (bajo las ~45 elegidas → más margen). Editable — subir tras medir rindes.
+NETWORK_SEARCH_BUDGET = {
+    "twitter":   {"general_pages": 1, "top_n": 3, "top_pages": 2, "rest_pages": 1},
+    "instagram": {"general_pages": 1, "top_n": 3, "top_pages": 2, "rest_pages": 0},
+    "tiktok":    {"general_pages": 1, "top_n": 3, "top_pages": 2, "rest_pages": 0},
+}
+_DEFAULT_BUDGET = {"general_pages": 1, "top_n": 3, "top_pages": 1, "rest_pages": 1}
+
+# Cuánto puede aportar cada término al corpus de un bloque (antes del clasificador).
+# El GENERAL se acota para que no tape a los candidatos; cada término POR CANDIDATO
+# puede aportar más (así el candidato top junta volumen hacia los ~80).
+GENERAL_TERM_MAX = 10
+CANDIDATE_TERM_MAX = 25
+# Tope de corpus POR BLOQUE al clasificador. Se clasifica SECUENCIAL, así que un
+# bloque grande tarda pero no pierde posts. Editable.
+BLOCK_MAX_POSTS = 120
+
 
 def _parse_pct(raw: str) -> float:
     """Convierte '42,5' o '42.5' a float. Lanza ValueError si no es numérico."""
@@ -152,9 +190,11 @@ def parse_pollster_csv(text: str) -> tuple[list[dict], list[str]]:
     return rows, warnings
 
 
-def _build_electoral_prompt(items_para_prompt: list[dict]) -> str:
+def _build_electoral_prompt(items_para_prompt: list[dict], network_context: str = "") -> str:
     items_text = json.dumps(items_para_prompt, ensure_ascii=False, indent=2)
-    return f"""Sos un analista de opinión pública que evalúa publicaciones de redes sociales del ámbito argentino de cara a las próximas elecciones presidenciales.
+    ctx = (f"CONTEXTO DE LA RED (tenelo en cuenta al interpretar cada posteo):\n"
+           f"{network_context}\n\n") if network_context else ""
+    return f"""{ctx}Sos un analista de opinión pública que evalúa publicaciones de redes sociales del ámbito argentino de cara a las próximas elecciones presidenciales.
 
 Vas a recibir una lista de publicaciones en JSON. Cada una tiene un "id" único ("Post_0", "Post_1", ...), su "texto" y la "red".
 
@@ -380,6 +420,80 @@ def _merge_pollster_rows(auto_rows: list[dict], manual_rows: list[dict]) -> list
     return list(merged.values())
 
 
+def run_network_block(network: str, termino: str, keywords: list[str],
+                      candidatos: list[str], date: str | None, country: str) -> tuple[dict, bool]:
+    """BLOQUE autónomo de UNA red. Hace SUS búsquedas (general + por candidato según
+    NETWORK_SEARCH_BUDGET[network], enfocando profundidad en los top), junta y dedupea
+    SUS posts, y los verifica/clasifica con el CONTEXTO de esa red. Devuelve
+    (block, hubo_upstream). block = {network, posts_by_id, analysis, status}."""
+    budget = NETWORK_SEARCH_BUDGET.get(network, _DEFAULT_BUDGET)
+    # specs: (término, páginas, tope de aporte). La general acotada; los candidatos top
+    # con más páginas; el resto según rest_pages (0 => no se busca individual).
+    specs: list[tuple[str, int, int]] = [(termino, budget["general_pages"], GENERAL_TERM_MAX)]
+    for i, cand in enumerate(candidatos):
+        pages = budget["top_pages"] if i < budget["top_n"] else budget["rest_pages"]
+        if pages > 0:
+            specs.append((f"{cand} {termino}".strip(), pages, CANDIDATE_TERM_MAX))
+
+    posts: list[dict] = []
+    seen: set[str] = set()
+    any_up = False
+    for term, pages, cap in specs:
+        try:
+            raw, up = normalizer.fetch_raw_posts(
+                termino=term, fecha_desde=date, keywords=keywords,
+                accounts=[], networks=[network], country=country, pages=pages)
+        except Exception as e:  # una búsqueda que rompe no debe tumbar el bloque
+            print(f"ERROR fetch_raw_posts[{network}] term='{term}': {e}")
+            raw, up = [], True
+        any_up = any_up or up
+        added = 0
+        for pp in raw:
+            if added >= cap:
+                break
+            url = pp.get("post_url") or ""
+            if url and url in seen:
+                continue
+            if url:
+                seen.add(url)
+            posts.append(pp)
+            added += 1
+    if len(posts) > BLOCK_MAX_POSTS:
+        posts = posts[:BLOCK_MAX_POSTS]
+
+    # ids únicos por red (así no colisionan entre bloques al armar la evidencia).
+    posts_by_id = {f"{network}_{i}": p for i, p in enumerate(posts)}
+    analysis = (analyze_posts_electoral(posts_by_id, network_context=NETWORK_CONTEXT.get(network, ""))
+                if posts_by_id else [])
+    if analysis is None:  # todos los lotes fallaron por upstream
+        any_up = True
+        analysis = []
+    status = {"red": network, "encontrados": len(posts), "analizados": len(analysis)}
+    return {"network": network, "posts_by_id": posts_by_id,
+            "analysis": analysis, "status": status}, any_up
+
+
+def _merge_bloques(bloques: list[dict]) -> tuple[list[dict], int, dict, list[dict]]:
+    """Combina los bloques por red: candidatos agregados (sumando pos/neg/neu/menciones
+    de TODAS las redes) con `por_red` = menciones por red. Reusa aggregate_net_sentiment
+    (sobre el total y sobre cada bloque). Devuelve
+    (candidatos, baja_confianza, posts_by_id_total, analysis_total)."""
+    all_analysis: list[dict] = []
+    posts_by_id_total: dict = {}
+    for blk in bloques:
+        all_analysis.extend(blk["analysis"])
+        posts_by_id_total.update(blk["posts_by_id"])
+    candidatos, baja_conf = aggregate_net_sentiment(all_analysis)
+    por_red_map: dict[str, dict[str, int]] = {}
+    for blk in bloques:
+        cands_red, _ = aggregate_net_sentiment(blk["analysis"])
+        for c in cands_red:
+            por_red_map.setdefault(canonical_key(c["nombre"]), {})[blk["network"]] = c["menciones"]
+    for c in candidatos:
+        c["por_red"] = por_red_map.get(canonical_key(c["nombre"]), {})
+    return candidatos, baja_conf, posts_by_id_total, all_analysis
+
+
 def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
                      country: str, pollster_csv: str, auto_consultoras: bool = False,
                      progress_cb=None) -> dict:
@@ -403,62 +517,27 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
         warnings.extend(auto_warnings)
         pollster_rows = _merge_pollster_rows(auto_rows, pollster_rows)
 
-    # 2) Corpus: búsqueda general + UNA por candidato (lista fija ∪ CSV), SIN el
-    #    filtro de relevancia del monitor (fetch_raw_posts). El clasificador
-    #    electoral decide qué es electoral. Esto es lo que garantiza que aparezcan
-    #    varios candidatos y no uno solo. Cada término aporta hasta POSTS_PER_TERM
-    #    posts para que la búsqueda general no cope el corpus.
+    # 2) Bloques por red: cada red seleccionada es un BLOQUE autónomo (sus búsquedas,
+    #    su contexto, su verificación), corridos SECUENCIALMENTE para no gatillar el
+    #    rate-limit del free-tier de Gemini (el async ya sacó la presión de tiempo).
     termino = " ".join([k for k in keywords if k and k.strip()]).strip() or "elecciones presidenciales"
     candidatos_buscar = build_candidate_search_list(pollster_rows)
-    # Redes por candidato: X si el usuario la seleccionó; si no, las que sí eligió.
-    cand_nets = [n for n in (networks or []) if n in CANDIDATE_NETWORKS] or (networks or [])
-    # search_specs = lista de (término, redes). La general usa todas las redes; cada
-    # candidato usa cand_nets (X) para ahorrar cuota. Dedup por texto de término.
-    search_specs: list[tuple[str, list[str]]] = []
-    vistos_terms: set[str] = set()
-    for term, nets in [(termino, networks)] + [(f"{c} {termino}".strip(), cand_nets) for c in candidatos_buscar]:
-        k = term.lower()
-        if k and k not in vistos_terms:
-            vistos_terms.add(k)
-            search_specs.append((term, nets))
+    nets = [n for n in (networks or []) if n in ("twitter", "instagram", "tiktok")] or ["twitter"]
 
-    def _fetch(spec: tuple[str, list[str]]) -> tuple[list[dict], bool]:
-        term, nets = spec
-        try:
-            return normalizer.fetch_raw_posts(
-                termino=term, fecha_desde=date, keywords=keywords,
-                accounts=[], networks=nets, country=country, pages=URNA_SERP_PAGES,
-            )
-        except Exception as e:  # una búsqueda que rompe no debe tumbar el análisis
-            print(f"ERROR fetch_raw_posts term='{term}': {e}")
-            return [], True
-
-    # Búsquedas en PARALELO (antes en serie -> >120s). ex.map preserva el orden de
-    # search_specs, así el merge es determinístico (general primero, luego candidatos).
-    _p("Buscando publicaciones…", 10)
-    with ThreadPoolExecutor(max_workers=min(FETCH_CONCURRENCY, len(search_specs))) as ex:
-        resultados_por_termino = list(ex.map(_fetch, search_specs))
-
-    posts: list[dict] = []
-    seen_urls: set[str] = set()
+    bloques: list[dict] = []
     any_upstream = False
-    for raw, up in resultados_por_termino:
+    for i, net in enumerate(nets):
+        _p(f"Bloque {net} ({i + 1}/{len(nets)}): buscando y verificando…",
+           10 + int(70 * i / len(nets)))
+        block, up = run_network_block(net, termino, keywords, candidatos_buscar, date, country)
         any_upstream = any_upstream or up
-        added = 0
-        for p in raw:
-            if added >= POSTS_PER_TERM:
-                break
-            url = p.get("post_url") or ""
-            if url and url in seen_urls:
-                continue
-            if url:
-                seen_urls.add(url)
-            posts.append(p)
-            added += 1
-    if len(posts) > ELECTORAL_MAX_POSTS:
-        posts = posts[:ELECTORAL_MAX_POSTS]
+        bloques.append(block)
 
-    if not posts:
+    total_posts = sum(b["status"]["encontrados"] for b in bloques)
+    analizados = sum(b["status"]["analizados"] for b in bloques)
+    bloques_status = [b["status"] for b in bloques]
+
+    if total_posts == 0:
         # Distinguir "SerpAPI caído" (503) de "no hay resultados" (vacío legítimo).
         if any_upstream:
             raise UpstreamUnavailableError(
@@ -467,32 +546,26 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
         warnings.append("No se encontraron publicaciones para el término buscado.")
         return {"candidatos": [], "evidencia": [], "comparacion": [],
                 "meta": {"total_posts": 0, "posts_electorales": 0, "analizados": 0,
-                         "disclaimer": DISCLAIMER, "warnings": warnings}}
+                         "bloques": bloques_status, "disclaimer": DISCLAIMER, "warnings": warnings}}
 
-    # 3) Análisis electoral (ids estables Post_i).
-    _p(f"Analizando {len(posts)} publicaciones…", 40)
-    posts_by_id = {f"Post_{i}": p for i, p in enumerate(posts)}
-    analysis = analyze_posts_electoral(posts_by_id)
-    if analysis is None:
+    # Se buscó pero NINGÚN bloque logró clasificar (todos los lotes fallaron) y hubo
+    # upstream: es un 503 (Gemini caído/sin cuota), no "no hay candidatos".
+    if analizados == 0 and any_upstream:
         raise UpstreamUnavailableError(
             "Gemini no está disponible (cuota agotada o servicio caído). Reintentá en unos minutos.")
 
     _p("Armando resultados…", 85)
+    # 3) Combinar bloques: candidatos con desglose por_red + evidencia + comparación.
+    candidatos, baja_conf, posts_by_id, analysis = _merge_bloques(bloques)
     posts_electorales = sum(1 for a in analysis if a.get("es_electoral") and a.get("candidatos"))
-
-    # 4) Agregación + evidencia + comparación.
-    candidatos, baja_conf = aggregate_net_sentiment(analysis)
     evidencia = build_evidence(analysis, posts_by_id)
     comparacion, comp_warnings = compare_vs_pollsters(candidatos, pollster_rows)
     warnings.extend(comp_warnings)
 
-    # Cuántos posts llegó a clasificar Gemini. Si es menos que el corpus, algún lote
-    # falló (típico: rate-limit del free-tier) y se PERDIERON posts — lo exponemos
-    # para no confundir "clasificación perdida" con "no hay posts".
-    analizados = len(analysis)
-    if analizados < len(posts):
+    # Si se clasificó menos que el corpus, algún lote se perdió (rate-limit) — avisar.
+    if analizados < total_posts:
         warnings.append(
-            f"Clasificación parcial: se analizaron {analizados} de {len(posts)} "
+            f"Clasificación parcial: se analizaron {analizados} de {total_posts} "
             f"publicaciones (posible límite de cuota de Gemini). Reintentá en unos minutos.")
 
     if not candidatos:
@@ -502,12 +575,13 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
 
     return {
         "candidatos": candidatos, "evidencia": evidencia, "comparacion": comparacion,
-        "meta": {"total_posts": len(posts), "posts_electorales": posts_electorales,
-                 "analizados": analizados, "disclaimer": DISCLAIMER, "warnings": warnings},
+        "meta": {"total_posts": total_posts, "posts_electorales": posts_electorales,
+                 "analizados": analizados, "bloques": bloques_status,
+                 "disclaimer": DISCLAIMER, "warnings": warnings},
     }
 
 
-def analyze_posts_electoral(posts_by_id: dict[str, dict]) -> list[dict] | None:
+def analyze_posts_electoral(posts_by_id: dict[str, dict], network_context: str = "") -> list[dict] | None:
     """Clasifica cada post (candidato + postura + confianza) vía Gemini, en LOTES de
     ELECTORAL_BATCH_SIZE (una llamada por lote) para no armar un prompt gigante y
     frágil con corpus grande. Devuelve el mirror saneado por id, o None SOLO si
@@ -523,8 +597,9 @@ def analyze_posts_electoral(posts_by_id: dict[str, dict]) -> list[dict] | None:
     # Pool bajo (ELECTORAL_BATCH_CONCURRENCY) para no gatillar rate-limits del free-tier.
     out: list[dict] = []
     alguno_ok = False
+    clasificar = partial(_analyze_electoral_batch, network_context=network_context)
     with ThreadPoolExecutor(max_workers=min(ELECTORAL_BATCH_CONCURRENCY, len(batches))) as ex:
-        for res in ex.map(_analyze_electoral_batch, batches):
+        for res in ex.map(clasificar, batches):
             if res is None:
                 print("DEBUG electoral: un lote falló (upstream).")
                 continue
@@ -535,7 +610,7 @@ def analyze_posts_electoral(posts_by_id: dict[str, dict]) -> list[dict] | None:
     return out
 
 
-def _analyze_electoral_batch(posts_by_id: dict[str, dict]) -> list[dict] | None:
+def _analyze_electoral_batch(posts_by_id: dict[str, dict], network_context: str = "") -> list[dict] | None:
     """Corre UN lote por Gemini. Devuelve el mirror saneado por id, o None si el
     transporte falló (upstream)."""
     if not posts_by_id:
@@ -544,7 +619,7 @@ def _analyze_electoral_batch(posts_by_id: dict[str, dict]) -> list[dict] | None:
         {"id": pid, "red": src.get("network", ""), "texto": src.get("text", "") or ""}
         for pid, src in posts_by_id.items()
     ]
-    prompt = _build_electoral_prompt(items_para_prompt)
+    prompt = _build_electoral_prompt(items_para_prompt, network_context)
     parsed, _status = gemini_client.run_with_rotation(prompt)
     if parsed is None:
         return None

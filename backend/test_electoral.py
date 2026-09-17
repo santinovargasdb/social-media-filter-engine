@@ -12,6 +12,23 @@ CSV_OK = (
 )
 
 
+# Fake id-agnóstico de analyze_posts_electoral para los tests de integración de
+# run_boca_de_urna: atribuye a cada post el candidato cuyo nombre/apellido aparece en
+# su texto. No depende del esquema de ids (ahora "{red}_i") ni de Gemini.
+_FAKE_CANDS = ["Javier Milei", "Axel Kicillof"]
+
+
+def _fake_analyze_por_texto(posts_by_id, network_context=""):
+    out = []
+    for pid, p in posts_by_id.items():
+        txt = (p.get("text") or "").lower()
+        cands = [{"nombre": full, "postura": "a_favor", "confianza": 0.9}
+                 for full in _FAKE_CANDS if any(w in txt for w in full.lower().split())]
+        out.append({"id": pid, "es_electoral": bool(cands), "cita": p.get("text", ""),
+                    "candidatos": cands})
+    return out
+
+
 def test_parse_csv_happy_path():
     rows, warnings = el.parse_pollster_csv(CSV_OK)
     assert len(rows) == 3
@@ -188,22 +205,26 @@ def test_compare_sin_csv_devuelve_solo_redes():
 
 
 def test_run_boca_de_urna_flujo_completo(monkeypatch):
-    import normalizer, gemini_client as gc
-    posts = [
-        {"id": "1", "network": "twitter", "author": "a", "author_url": "", "text": "Milei la rompe",
-         "date": "", "post_url": "u1", "relevance_score": 80, "relevance_level": "alta",
-         "matched_terms": [], "video_url": None},
-        {"id": "2", "network": "instagram", "author": "b", "author_url": "", "text": "Kicillof presidente",
-         "date": "", "post_url": "u2", "relevance_score": 70, "relevance_level": "alta",
-         "matched_terms": [], "video_url": None},
-    ]
-    monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: (posts, False))
-    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
-        {"id": "Post_0", "es_electoral": True, "cita": "Milei la rompe",
-         "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]},
-        {"id": "Post_1", "es_electoral": True, "cita": "Kicillof presidente",
-         "candidatos": [{"nombre": "Axel Kicillof", "postura": "a_favor", "confianza": 0.9}]},
-    ], None))
+    """Flujo completo con BLOQUES por red: X trae el post de Milei, Instagram el de
+    Kicillof; se combinan con desglose por_red + comparación con consultoras."""
+    import normalizer
+    milei = {"id": "1", "network": "twitter", "author": "a", "author_url": "", "text": "Milei la rompe",
+             "date": "", "post_url": "u1", "relevance_score": 80, "relevance_level": "alta",
+             "matched_terms": [], "video_url": None}
+    kici = {"id": "2", "network": "instagram", "author": "b", "author_url": "", "text": "Kicillof presidente",
+            "date": "", "post_url": "u2", "relevance_score": 70, "relevance_level": "alta",
+            "matched_terms": [], "video_url": None}
+
+    def fake_fetch(**kw):
+        net = (kw.get("networks") or ["twitter"])[0]
+        if net == "twitter":
+            return [milei], False
+        if net == "instagram":
+            return [kici], False
+        return [], False
+
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", fake_fetch)
+    monkeypatch.setattr(el, "analyze_posts_electoral", _fake_analyze_por_texto)
 
     csv = ("consultora,fecha,candidato,porcentaje\n"
            "X,2026-08-01,Javier Milei,48\n")
@@ -213,23 +234,49 @@ def test_run_boca_de_urna_flujo_completo(monkeypatch):
     assert out["meta"]["disclaimer"] == el.DISCLAIMER
     assert {c["nombre"] for c in out["candidatos"]} == {"Javier Milei", "Axel Kicillof"}
     assert len(out["evidencia"]) == 2
+    # Desglose por red: Milei vino del bloque X, Kicillof del de Instagram.
+    m = next(c for c in out["candidatos"] if el.canonical_key(c["nombre"]) == el.canonical_key("Javier Milei"))
+    assert m["por_red"] == {"twitter": 1}
+    # La meta trae el estado por bloque.
+    assert {b["red"] for b in out["meta"]["bloques"]} == {"twitter", "instagram"}
     milei_comp = next(c for c in out["comparacion"] if el.canonical_key(c["candidato"]) == el.canonical_key("Javier Milei"))
     assert milei_comp["consultoras"][0]["consultora"] == "X"
+
+
+def test_analyze_posts_electoral_inyecta_contexto_de_red(monkeypatch):
+    """El clasificador acepta un contexto por red y lo mete en el prompt (para que
+    cada bloque interprete su red con su propio criterio). Sin contexto, el prompt
+    no cambia (comportamiento actual)."""
+    import gemini_client as gc
+    prompts = []
+    monkeypatch.setattr(gc, "run_with_rotation",
+                        lambda prompt: (prompts.append(prompt) or ([], None)))
+    posts_by_id = {"Post_0": {"text": "x", "network": "instagram"}}
+    el.analyze_posts_electoral(posts_by_id, network_context="CONTEXTO_IG_UNICO")
+    assert "CONTEXTO_IG_UNICO" in prompts[0]
+    # Sin contexto: no aparece ningún encabezado de contexto.
+    prompts.clear()
+    el.analyze_posts_electoral(posts_by_id)
+    assert "CONTEXTO DE LA RED" not in prompts[0]
 
 
 def test_run_boca_de_urna_avisa_clasificacion_parcial(monkeypatch):
     """Si el clasificador procesa menos posts que el corpus (lotes que fallan por
     rate-limit), la meta expone 'analizados' y se agrega un aviso — para no creer
     que 'hay pocos posts' cuando en realidad se perdió la clasificación."""
-    import normalizer, gemini_client as gc
+    import normalizer
     posts = [{"id": str(i), "network": "twitter", "author": "", "author_url": "", "text": f"Milei {i}",
               "date": "", "post_url": f"u{i}", "relevance_score": 50, "relevance_level": "media",
               "matched_terms": [], "video_url": None} for i in range(2)]
     monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: (posts, False))
-    # El clasificador solo devuelve 1 de los 2 posts (el otro "se perdió").
-    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
-        {"id": "Post_0", "es_electoral": True, "cita": "Milei",
-         "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]}], None))
+
+    # El clasificador solo devuelve 1 de los 2 posts (el otro "se perdió" por rate-limit).
+    def partial_analyze(posts_by_id, network_context=""):
+        pid = next(iter(posts_by_id))
+        return [{"id": pid, "es_electoral": True, "cita": "Milei",
+                 "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]}]
+
+    monkeypatch.setattr(el, "analyze_posts_electoral", partial_analyze)
     out = el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar", pollster_csv="")
     assert out["meta"]["total_posts"] == 2
     assert out["meta"]["analizados"] == 1
@@ -239,20 +286,19 @@ def test_run_boca_de_urna_avisa_clasificacion_parcial(monkeypatch):
 def test_run_boca_de_urna_reporta_progreso(monkeypatch):
     """El análisis async necesita reportar progreso: run_boca_de_urna llama a
     progress_cb(phase, pct) en los hitos, con pct no decreciente."""
-    import normalizer, gemini_client as gc
+    import normalizer
     posts = [{"id": "1", "network": "twitter", "author": "", "author_url": "", "text": "Milei",
               "date": "", "post_url": "u1", "relevance_score": 50, "relevance_level": "media",
               "matched_terms": [], "video_url": None}]
     monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: (posts, False))
-    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
-        {"id": "Post_0", "es_electoral": True, "cita": "Milei",
-         "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]}], None))
+    monkeypatch.setattr(el, "analyze_posts_electoral", _fake_analyze_por_texto)
     hitos = []
     el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar",
                         pollster_csv="", progress_cb=lambda phase, pct: hitos.append((phase, pct)))
     assert hitos                                              # reportó progreso
     assert [p for _, p in hitos] == sorted(p for _, p in hitos)   # pct no decreciente
-    assert any("analiz" in p.lower() for p, _ in hitos)      # menciona la fase de análisis
+    # Menciona el bloque por red y el armado final.
+    assert any("bloque" in p.lower() for p, _ in hitos)
 
 
 def test_run_boca_de_urna_cero_posts(monkeypatch):
@@ -342,28 +388,62 @@ def test_build_candidate_search_list_une_fijos_y_csv():
     assert len(milei_keys) == 1
 
 
-def test_run_boca_de_urna_busca_por_candidato(monkeypatch):
-    """El corpus se arma con la búsqueda general (todas las redes) + una por cada
-    candidato fijo. Las de candidato van SOLO a X para ahorrar cuota de SerpAPI."""
+def test_run_network_block_usa_el_contexto_de_su_red(monkeypatch):
+    """Cada bloque verifica SUS posts con el CONTEXTO de su red (no un prompt genérico)."""
     import normalizer
-    llamados = []  # (termino, tuple(redes))
 
     def fake_fetch(**kw):
-        llamados.append((kw["termino"], tuple(kw["networks"])))
+        net = kw["networks"][0]
+        return [{"network": net, "text": "Milei", "post_url": f"u-{net}", "author": "",
+                 "author_url": "", "date": "", "relevance_score": 50, "relevance_level": "media",
+                 "matched_terms": [], "video_url": None}], False
+
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", fake_fetch)
+    captured = {}
+
+    def fake_analyze(posts_by_id, network_context=""):
+        captured["ctx"] = network_context
+        return [{"id": k, "es_electoral": True, "cita": "", "candidatos": []} for k in posts_by_id]
+
+    monkeypatch.setattr(el, "analyze_posts_electoral", fake_analyze)
+    block, up = el.run_network_block("tiktok", "elecciones", ["elecciones"],
+                                     ["Javier Milei"], None, "ar")
+    assert block["network"] == "tiktok"
+    assert captured["ctx"] == el.NETWORK_CONTEXT["tiktok"]  # contexto propio de la red
+    assert block["status"] == {"red": "tiktok", "encontrados": 1, "analizados": 1}
+    assert up is False
+
+
+def test_run_boca_de_urna_bloques_por_red(monkeypatch):
+    """Cada red es un BLOQUE autónomo: busca SOLO en su red. La general va por red; en
+    X se busca a TODOS los candidatos, en IG/TikTok solo a los top_n; el candidato top
+    recibe top_pages (paginación honda)."""
+    import normalizer
+    llamados = []  # (termino, red, pages)
+
+    def fake_fetch(**kw):
+        nets = kw["networks"]
+        assert len(nets) == 1, "cada búsqueda es de UNA sola red (bloque)"
+        llamados.append((kw["termino"], nets[0], kw.get("pages", 1)))
         return [], False
 
     monkeypatch.setattr(normalizer, "fetch_raw_posts", fake_fetch)
     el.run_boca_de_urna(keywords=["elecciones presidenciales"],
                         networks=["twitter", "instagram", "tiktok"],
                         date=None, country="ar", pollster_csv="")
-    # La búsqueda general usa TODAS las redes seleccionadas.
-    assert ("elecciones presidenciales", ("twitter", "instagram", "tiktok")) in llamados
-    # Cada búsqueda por candidato usa solo X.
-    por_candidato = [c for c in llamados if c[0] != "elecciones presidenciales"]
-    assert por_candidato and all(nets == ("twitter",) for _term, nets in por_candidato)
-    assert any("Javier Milei" in term for term, _ in por_candidato)
-    # general + una por cada candidato fijo (deduplicado por texto).
-    assert len(llamados) == 1 + len(el.CANDIDATOS_DEFAULT)
+    assert {red for _t, red, _p in llamados} == {"twitter", "instagram", "tiktok"}
+    # La general se busca en cada red, con sus general_pages.
+    for net in ("twitter", "instagram", "tiktok"):
+        assert ("elecciones presidenciales", net, el.NETWORK_SEARCH_BUDGET[net]["general_pages"]) in llamados
+    # X busca a TODOS los candidatos (rest_pages=1); IG solo a los top_n (rest_pages=0).
+    cand_tw = [t for t, red, _p in llamados if red == "twitter" and t != "elecciones presidenciales"]
+    cand_ig = [t for t, red, _p in llamados if red == "instagram" and t != "elecciones presidenciales"]
+    assert len(cand_tw) == len(el.CANDIDATOS_DEFAULT)
+    assert len(cand_ig) == el.NETWORK_SEARCH_BUDGET["instagram"]["top_n"]
+    # El candidato top recibe top_pages en X (paginación honda hacia los ~80).
+    top = el.CANDIDATOS_DEFAULT[0]
+    top_pages = next(pg for t, red, pg in llamados if red == "twitter" and t.startswith(top))
+    assert top_pages == el.NETWORK_SEARCH_BUDGET["twitter"]["top_pages"]
 
 
 def _fake_rotation_por_contenido(monkeypatch, fail_if_contains_index=None):
@@ -446,15 +526,12 @@ def test_merge_pollster_rows_csv_pisa_auto():
 
 
 def test_run_boca_auto_consultoras_llena_comparacion(monkeypatch):
-    import normalizer, gemini_client as gc, pollsters
+    import normalizer, pollsters
     posts = [{"id": "1", "network": "twitter", "author": "", "author_url": "", "text": "Milei",
               "date": "", "post_url": "u1", "relevance_score": 80, "relevance_level": "alta",
               "matched_terms": [], "video_url": None}]
     monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: (posts, False))
-    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
-        {"id": "Post_0", "es_electoral": True, "cita": "Milei",
-         "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]},
-    ], None))
+    monkeypatch.setattr(el, "analyze_posts_electoral", _fake_analyze_por_texto)
     monkeypatch.setattr(pollsters, "fetch_pollster_rows", lambda **kw: ([
         {"consultora": "Opinaia", "fecha": "2026-09-01", "candidato": "Javier Milei",
          "porcentaje": 41.0, "fuente_url": "https://n/1", "fuente_titulo": "Nota"}], []))
