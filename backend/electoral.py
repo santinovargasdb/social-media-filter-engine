@@ -77,9 +77,9 @@ POSTS_PER_TERM = 6
 # paginar multiplicaba las búsquedas y solo traía resultados de menor relevancia).
 URNA_SERP_PAGES = 1
 # Tope duro de posts al clasificador electoral. Con el análisis async ya no hay techo
-# de 120s, pero el límite REAL es el rate-limit del free-tier de Gemini (lotes que
-# fallan) + la cuota de SerpAPI, así que se mantiene chico: 60 => 3 lotes. Editable.
-ELECTORAL_MAX_POSTS = 60
+# de 120s. No cuesta cuota de SerpAPI (solo recorta el pool ya buscado), así que se
+# deja holgado para conservar todo lo que se buscó: 80 => hasta 4 lotes. Editable.
+ELECTORAL_MAX_POSTS = 80
 # El clasificador electoral corre en lotes de este tamaño (una llamada a Gemini por
 # lote). 20 => 60 posts entran en 3 lotes.
 ELECTORAL_BATCH_SIZE = 20
@@ -90,10 +90,11 @@ ELECTORAL_BATCH_SIZE = 20
 # request tardaba >120s → timeout. Ahora corren en paralelo con pools acotados.
 # SerpAPI: pool moderado para respetar el límite de concurrencia del plan.
 FETCH_CONCURRENCY = 5
-# Gemini: pool bajo para no gatillar los rate-limits del free-tier (run_with_rotation
-# ya maneja 429/503, pero mejor no provocarlos con demasiadas llamadas simultáneas).
-# Se mantiene en 2: subirlo a 3 empeoró los fallos de lote por rate-limit (medido).
-ELECTORAL_BATCH_CONCURRENCY = 2
+# Gemini: SECUENCIAL (1). Como el análisis es async (sin apuro de 120s), correr los
+# lotes de a uno evita las ráfagas que gatillan el rate-limit del free-tier: así NO
+# se pierden clasificaciones (la causa de que un corpus grande devolviera pocos posts
+# electorales). Se cambia velocidad por confiabilidad, que es lo que importa acá.
+ELECTORAL_BATCH_CONCURRENCY = 1
 
 # Redes para las búsquedas POR CANDIDATO. La opinión electoral vive sobre todo en X,
 # así que las búsquedas por candidato van solo a X para ahorrar cuota de SerpAPI:
