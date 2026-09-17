@@ -135,6 +135,56 @@ def test_recency_tbs_arma_rango_de_fechas():
     assert tbs == "cdr:1,cd_min:05/18/2026,cd_max:09/15/2026"
 
 
+def test_fetch_one_consultora_incluye_snippet_aunque_haya_texto(monkeypatch):
+    """En notas con paywall/JS el cuerpo del artículo es el cascarón (login/boilerplate)
+    sin números; el snippet del buscador sí trae el titular con el porcentaje. El
+    snippet SIEMPRE debe llegar a Gemini, aunque el cuerpo no esté vacío."""
+    import fetcher, gemini_client as gc
+    monkeypatch.setattr(fetcher, "search_serpapi_web",
+                        lambda q, max_results=5, country="ar", tbs=None: [
+                            {"title": "Nota", "snippet": "Milei 40%, Kicillof 30%",
+                             "url": "https://n/1", "date": "2026-09-01"}])
+    # El cuerpo trae basura de paywall, sin los números.
+    monkeypatch.setattr(p, "_fetch_article_text", lambda url: "Suscribite para seguir leyendo")
+    prompts = []
+    monkeypatch.setattr(gc, "run_with_rotation",
+                        lambda prompt: (prompts.append(prompt) or ([{"id": "Art_0", "filas": []}], None)))
+    p._fetch_one_consultora("Opinaia", "ar")
+    assert "Milei 40%" in prompts[0]  # el snippet con los números llegó al prompt
+
+
+def test_fetch_pollster_rows_avisa_si_no_extrae_porcentajes(monkeypatch):
+    """Encuentra notas pero Gemini no extrae ningún porcentaje (paywall/prompt): NO
+    debe quedar en silencio (tabla vacía sin aviso) — agrega un warning."""
+    import fetcher, gemini_client as gc
+    monkeypatch.setattr(fetcher, "search_serpapi_web",
+                        lambda q, max_results=5, country="ar", tbs=None: [
+                            {"title": "Nota", "snippet": "s", "url": "https://n/1", "date": "2026-09-01"}])
+    monkeypatch.setattr(p, "_fetch_article_text", lambda url: "texto sin porcentajes")
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([{"id": "Art_0", "filas": []}], None))
+    p._CACHE.clear()
+    rows, warnings = p.fetch_pollster_rows(consultoras=["Opinaia"])
+    assert rows == []
+    assert any("Opinaia" in w for w in warnings)
+
+
+def test_fetch_pollster_rows_cae_a_amplia_si_recencia_da_error(monkeypatch):
+    """Si la búsqueda con recencia devuelve None (p. ej. el tbs de fechas la rompe),
+    igual reintenta SIN filtro en vez de rendirse con 'no respondió'."""
+    import fetcher, gemini_client as gc
+
+    def fake_search(q, max_results=5, country="ar", tbs=None):
+        return None if tbs else [{"title": "t", "snippet": "Milei 40%", "url": "u", "date": "2026-01-10"}]
+
+    monkeypatch.setattr(fetcher, "search_serpapi_web", fake_search)
+    monkeypatch.setattr(p, "_fetch_article_text", lambda url: "")
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: (
+        [{"id": "Art_0", "filas": [{"candidato": "Javier Milei", "porcentaje": 40}]}], None))
+    p._CACHE.clear()
+    rows, warnings = p.fetch_pollster_rows(consultoras=["Opinaia"])
+    assert len(rows) == 1 and rows[0]["candidato"] == "Javier Milei"
+
+
 def test_fetch_pollster_rows_cae_a_busqueda_amplia_si_no_hay_recientes(monkeypatch):
     """Primero busca con filtro de recencia; si eso viene vacío, reintenta SIN el
     filtro (mejor una nota más vieja que ninguna)."""

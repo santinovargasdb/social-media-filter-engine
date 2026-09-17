@@ -204,28 +204,40 @@ def _recency_tbs(days: int, today: datetime.date | None = None) -> str:
 
 def _fetch_one_consultora(consultora: str, country: str) -> tuple[list[dict], list[str]]:
     query = f'"{consultora}" encuesta intención de voto {ELECCION_LABEL}'
-    # Priorizar notas recientes; si no hay, caer a búsqueda amplia.
+    # Priorizar notas recientes; si eso viene vacío O falla (None, p. ej. el tbs de
+    # fechas rompe la búsqueda), caer a búsqueda amplia (mejor una nota vieja y
+    # fechada que ninguna) antes de rendirse.
     resultados = fetcher.search_serpapi_web(
         query, max_results=ARTICULOS_POR_CONSULTORA, country=country,
         tbs=_recency_tbs(RECENCY_DAYS))
-    if resultados is None:
-        return [], [f"{consultora}: el buscador no respondió."]
     if not resultados:
         resultados = fetcher.search_serpapi_web(
             query, max_results=ARTICULOS_POR_CONSULTORA, country=country)
-        if resultados is None:
-            return [], [f"{consultora}: el buscador no respondió."]
+    if resultados is None:
+        return [], [f"{consultora}: el buscador no respondió."]
     if not resultados:
         return [], [f"No se encontraron encuestas recientes de {consultora}."]
     articles = []
     for r in resultados:
-        text = _fetch_article_text(r.get("url", "")) or r.get("snippet", "")
+        # Unir SIEMPRE el snippet del buscador con el cuerpo del artículo: en diarios
+        # con paywall/JS el cuerpo baja como cascarón (login/boilerplate) sin números,
+        # y el snippet suele traer el titular con el porcentaje. El snippet va primero
+        # para que sobreviva al tope de caracteres.
+        snippet = r.get("snippet", "")
+        cuerpo = _fetch_article_text(r.get("url", ""))
+        text = ("\n\n".join(x for x in (snippet, cuerpo) if x))[:_ARTICLE_MAX_CHARS]
         articles.append({"url": r.get("url", ""), "title": r.get("title", ""),
                          "text": text, "date": r.get("date", "")})
     parsed, _status = gemini_client.run_with_rotation(_build_extract_prompt(consultora, articles))
     if parsed is None:
         return [], [f"{consultora}: no se pudo extraer (IA no disponible)."]
-    return _parse_extraction(parsed, consultora, articles), []
+    rows = _parse_extraction(parsed, consultora, articles)
+    if not rows:
+        # Se encontraron notas pero no se extrajo ningún porcentaje: NO dejarlo en
+        # silencio (tabla con columnas vacías sin aviso), explicar por qué.
+        return [], [f"{consultora}: se encontraron notas pero no se pudo extraer "
+                    f"ningún porcentaje (posible paywall o formato no reconocido)."]
+    return rows, []
 
 
 def fetch_pollster_rows(fecha_desde: str | None = None, country: str = "ar",
