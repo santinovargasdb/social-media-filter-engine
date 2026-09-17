@@ -48,16 +48,18 @@ _NETWORK_PROMPT_LABEL = {
 }
 
 # Tope de resultados por red que se mandan a Gemini. Balancea volumen vs. tokens /
-# rate limit del free-tier / timeout de 120s. Subido de 8 a 20 ("Moderado") para
-# mostrar bastante más contenido: si el batch combinado se pasa de tiempo, ya hay
-# fallback red-por-red aguas abajo.
-GEMINI_MAX_PER_NETWORK = 20
+# rate limit del free-tier / timeout de 120s. Subido de 8 a 12 ("Moderado"): más
+# contenido que antes, pero el batch combinado (3 redes => ~36) queda del orden de
+# la urna (40 posts), que sí entra en tiempo. NO subir mucho más: una tanda muy
+# grande trunca la respuesta de Gemini y dispara el fallback red-por-red EN CASCADA
+# (el monitor busca/puntúa secuencialmente), lo que se pasa del timeout de 120s.
+GEMINI_MAX_PER_NETWORK = 12
 
 # Páginas de SerpAPI a traer por red en el monitor (paginación). ~10 resultados por
-# página; 3 páginas => hasta ~30 crudos por red, de los que se puntúan hasta
+# página; 2 páginas => hasta ~20 crudos por red, de los que se puntúan hasta
 # GEMINI_MAX_PER_NETWORK. Antes era 1 sola página: ese techo hacía que ampliar el
 # plazo casi no sumara posts. Editable.
-SERP_PAGES_MONITOR = 3
+SERP_PAGES_MONITOR = 2
 
 # ── Piso de score por red ─────────────────────────────────────────────────────
 # Se aplica como filtro duro en Python después del scoring de Gemini.
