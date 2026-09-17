@@ -4,6 +4,8 @@ export type Postura = "a_favor" | "en_contra" | "neutro";
 
 export interface UrnaCandidato {
   nombre: string; pct: number; pos: number; neg: number; neu: number; menciones: number;
+  // % de cada postura sobre las menciones de ESTE candidato (ej. 20/10/70).
+  pos_pct: number; neg_pct: number; neu_pct: number;
 }
 export interface UrnaPost {
   network: string; author: string; author_url: string; text: string; post_url: string; date: string;

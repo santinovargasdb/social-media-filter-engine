@@ -112,6 +112,21 @@ def test_aggregate_neto_y_confianza():
     assert candidatos == sorted(candidatos, key=lambda c: c["pct"], reverse=True)
 
 
+def test_aggregate_incluye_porcentajes_de_sentimiento():
+    """Además del total y los conteos, cada candidato trae el % de cada postura
+    (positivo/negativo/neutral) para mostrar 'Milei 25% positivo, 25% negativo…'."""
+    analysis = [
+        {"candidatos": [{"nombre": "Milei", "postura": "a_favor", "confianza": 0.9}], "cita": ""},
+        {"candidatos": [{"nombre": "Milei", "postura": "en_contra", "confianza": 0.9}], "cita": ""},
+        {"candidatos": [{"nombre": "Milei", "postura": "neutro", "confianza": 0.9}], "cita": ""},
+        {"candidatos": [{"nombre": "Milei", "postura": "neutro", "confianza": 0.9}], "cita": ""},
+    ]
+    candidatos, _bc = el.aggregate_net_sentiment(analysis)
+    m = candidatos[0]
+    # 1 pos, 1 neg, 2 neu sobre 4 menciones -> 25 / 25 / 50.
+    assert (m["pos_pct"], m["neg_pct"], m["neu_pct"]) == (25.0, 25.0, 50.0)
+
+
 def test_aggregate_pct_es_share_de_menciones():
     """pct siempre es volumen de menciones, sin importar el sentimiento (así todos
     los candidatos detectados aparecen; antes colapsaba a uno con sentimiento neto)."""

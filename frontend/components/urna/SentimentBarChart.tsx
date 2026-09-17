@@ -46,8 +46,15 @@ export default function SentimentBarChart({ candidatos }: { candidatos: UrnaCand
                 {c.neg > 0 && <div style={{ flexGrow: c.neg, background: COLORS.contra }} />}
               </div>
             </div>
-            <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "2px" }}>
-              {c.pos} a favor · {c.neg} en contra · {c.neu} neutro · {c.menciones} menciones
+            <div style={{ fontSize: "12px", marginTop: "3px" }}>
+              <span style={{ color: COLORS.favor, fontWeight: 600 }}>{c.pos_pct}% positivo</span>
+              {" · "}
+              <span style={{ color: COLORS.contra, fontWeight: 600 }}>{c.neg_pct}% negativo</span>
+              {" · "}
+              <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>{c.neu_pct}% neutral</span>
+            </div>
+            <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "1px" }}>
+              {c.pos} a favor · {c.neg} en contra · {c.neu} neutro · {c.menciones} opiniones
             </div>
           </div>
         ))}

@@ -215,9 +215,15 @@ def aggregate_net_sentiment(analysis: list[dict]) -> tuple[list[dict], int]:
     candidatos: list[dict] = []
     for e in entries:
         pct = (e["menciones"] / suma_menciones * 100) if suma_menciones else 0.0
+        men = e["menciones"]
         candidatos.append({
             "nombre": e["nombre"], "pct": round(pct, 1),
-            "pos": e["pos"], "neg": e["neg"], "neu": e["neu"], "menciones": e["menciones"],
+            "pos": e["pos"], "neg": e["neg"], "neu": e["neu"], "menciones": men,
+            # % de cada postura sobre las menciones de ESTE candidato (no el share
+            # de volumen `pct`), para mostrar "20% positivo, 10% negativo, 70% neutral".
+            "pos_pct": round(e["pos"] / men * 100, 1) if men else 0.0,
+            "neg_pct": round(e["neg"] / men * 100, 1) if men else 0.0,
+            "neu_pct": round(e["neu"] / men * 100, 1) if men else 0.0,
         })
     candidatos.sort(key=lambda c: c["pct"], reverse=True)
     return candidatos, baja_confianza
