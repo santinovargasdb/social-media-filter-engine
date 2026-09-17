@@ -68,18 +68,20 @@ CANDIDATOS_DEFAULT = [
 # Cuántos posts (como máximo) aporta cada término de búsqueda al corpus. Acota lo
 # que trae la búsqueda general para dejar lugar a las búsquedas por candidato (si
 # no, el término general coparía el corpus y volveríamos a ver un solo candidato).
-# Subido de 3 a 15: la Boca de Urna ahora corre ASÍNCRONA (jobs.py), sin el techo de
-# 120s, así que cada candidato puede aportar muchas más menciones.
-POSTS_PER_TERM = 15
-# Páginas de SerpAPI por búsqueda de la urna (paginación reusada de search_serpapi).
-# 2 => hasta ~20 crudos por red/término antes del tope POSTS_PER_TERM. Editable.
-URNA_SERP_PAGES = 2
-# Tope duro de posts que se mandan al clasificador electoral. Antes 40 (por el timeout
-# de 120s). Con el análisis async se sube a 200: ~10 lotes de Gemini, que tardan más
-# (~2-4 min) pero ya no chocan con ningún timeout HTTP. Editable.
-ELECTORAL_MAX_POSTS = 200
+# NOTA (medido en prod): subir esto a 15 + paginar NO ayudó — el cuello de botella no
+# es el corpus sino cuántos posts clasifica Gemini (free-tier) y la cobertura de Google.
+# Un corpus grande solo agregó ruido, disparó fallos de lote por rate-limit y quemó
+# cuota de SerpAPI. Se deja en un valor módico y económico.
+POSTS_PER_TERM = 6
+# Páginas de SerpAPI por búsqueda de la urna. 1 = una sola página (económico en cuota;
+# paginar multiplicaba las búsquedas y solo traía resultados de menor relevancia).
+URNA_SERP_PAGES = 1
+# Tope duro de posts al clasificador electoral. Con el análisis async ya no hay techo
+# de 120s, pero el límite REAL es el rate-limit del free-tier de Gemini (lotes que
+# fallan) + la cuota de SerpAPI, así que se mantiene chico: 60 => 3 lotes. Editable.
+ELECTORAL_MAX_POSTS = 60
 # El clasificador electoral corre en lotes de este tamaño (una llamada a Gemini por
-# lote). 20 => 200 posts entran en ~10 lotes.
+# lote). 20 => 60 posts entran en 3 lotes.
 ELECTORAL_BATCH_SIZE = 20
 
 # ── Concurrencia (clave para no exceder el timeout de 120s del frontend) ──────
@@ -90,9 +92,8 @@ ELECTORAL_BATCH_SIZE = 20
 FETCH_CONCURRENCY = 5
 # Gemini: pool bajo para no gatillar los rate-limits del free-tier (run_with_rotation
 # ya maneja 429/503, pero mejor no provocarlos con demasiadas llamadas simultáneas).
-# Subido a 3 con el análisis async (más lotes en paralelo sin presión de 120s), pero
-# se mantiene bajo para no disparar el rate-limit del free-tier de Gemini.
-ELECTORAL_BATCH_CONCURRENCY = 3
+# Se mantiene en 2: subirlo a 3 empeoró los fallos de lote por rate-limit (medido).
+ELECTORAL_BATCH_CONCURRENCY = 2
 
 # Redes para las búsquedas POR CANDIDATO. La opinión electoral vive sobre todo en X,
 # así que las búsquedas por candidato van solo a X para ahorrar cuota de SerpAPI:
@@ -464,7 +465,7 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
                 "cuota. Reintentá en un minuto.")
         warnings.append("No se encontraron publicaciones para el término buscado.")
         return {"candidatos": [], "evidencia": [], "comparacion": [],
-                "meta": {"total_posts": 0, "posts_electorales": 0,
+                "meta": {"total_posts": 0, "posts_electorales": 0, "analizados": 0,
                          "disclaimer": DISCLAIMER, "warnings": warnings}}
 
     # 3) Análisis electoral (ids estables Post_i).
@@ -484,6 +485,15 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
     comparacion, comp_warnings = compare_vs_pollsters(candidatos, pollster_rows)
     warnings.extend(comp_warnings)
 
+    # Cuántos posts llegó a clasificar Gemini. Si es menos que el corpus, algún lote
+    # falló (típico: rate-limit del free-tier) y se PERDIERON posts — lo exponemos
+    # para no confundir "clasificación perdida" con "no hay posts".
+    analizados = len(analysis)
+    if analizados < len(posts):
+        warnings.append(
+            f"Clasificación parcial: se analizaron {analizados} de {len(posts)} "
+            f"publicaciones (posible límite de cuota de Gemini). Reintentá en unos minutos.")
+
     if not candidatos:
         warnings.append("No se detectaron candidatos en las publicaciones analizadas.")
     if baja_conf:
@@ -492,7 +502,7 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
     return {
         "candidatos": candidatos, "evidencia": evidencia, "comparacion": comparacion,
         "meta": {"total_posts": len(posts), "posts_electorales": posts_electorales,
-                 "disclaimer": DISCLAIMER, "warnings": warnings},
+                 "analizados": analizados, "disclaimer": DISCLAIMER, "warnings": warnings},
     }
 
 

@@ -217,6 +217,25 @@ def test_run_boca_de_urna_flujo_completo(monkeypatch):
     assert milei_comp["consultoras"][0]["consultora"] == "X"
 
 
+def test_run_boca_de_urna_avisa_clasificacion_parcial(monkeypatch):
+    """Si el clasificador procesa menos posts que el corpus (lotes que fallan por
+    rate-limit), la meta expone 'analizados' y se agrega un aviso — para no creer
+    que 'hay pocos posts' cuando en realidad se perdió la clasificación."""
+    import normalizer, gemini_client as gc
+    posts = [{"id": str(i), "network": "twitter", "author": "", "author_url": "", "text": f"Milei {i}",
+              "date": "", "post_url": f"u{i}", "relevance_score": 50, "relevance_level": "media",
+              "matched_terms": [], "video_url": None} for i in range(2)]
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: (posts, False))
+    # El clasificador solo devuelve 1 de los 2 posts (el otro "se perdió").
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
+        {"id": "Post_0", "es_electoral": True, "cita": "Milei",
+         "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]}], None))
+    out = el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar", pollster_csv="")
+    assert out["meta"]["total_posts"] == 2
+    assert out["meta"]["analizados"] == 1
+    assert any("parcial" in w.lower() for w in out["meta"]["warnings"])
+
+
 def test_run_boca_de_urna_reporta_progreso(monkeypatch):
     """El análisis async necesita reportar progreso: run_boca_de_urna llama a
     progress_cb(phase, pct) en los hitos, con pct no decreciente."""
