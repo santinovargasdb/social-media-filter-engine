@@ -6,7 +6,10 @@ export interface UrnaCandidato {
   nombre: string; pct: number; pos: number; neg: number; neu: number; menciones: number;
   // % de cada postura sobre las menciones de ESTE candidato (ej. 20/10/70).
   pos_pct: number; neg_pct: number; neu_pct: number;
+  // Desglose de menciones por red (bloques): { twitter, instagram, tiktok }.
+  por_red?: Record<string, number>;
 }
+export interface UrnaBloque { red: string; encontrados: number; analizados: number; }
 export interface UrnaPost {
   network: string; author: string; author_url: string; text: string; post_url: string; date: string;
 }
@@ -23,6 +26,8 @@ export interface UrnaComparacion {
 }
 export interface UrnaMeta {
   total_posts: number; posts_electorales: number; disclaimer: string; warnings: string[];
+  analizados?: number;
+  bloques?: UrnaBloque[];
 }
 export interface UrnaResponse {
   candidatos: UrnaCandidato[]; evidencia: UrnaEvidencia[];

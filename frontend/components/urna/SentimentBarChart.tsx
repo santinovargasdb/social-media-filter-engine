@@ -10,6 +10,18 @@ const COLORS = {
   contra: "#E5534B",
 };
 
+const RED_LABEL: Record<string, string> = { twitter: "X", instagram: "IG", tiktok: "TikTok" };
+
+// "48 X · 20 IG · 12 TikTok" a partir del desglose por_red del candidato.
+function porRedTexto(porRed?: Record<string, number>): string {
+  if (!porRed) return "";
+  return Object.entries(porRed)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([red, n]) => `${n} ${RED_LABEL[red] || red}`)
+    .join(" · ");
+}
+
 function Legend() {
   const item = (color: string, label: string) => (
     <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
@@ -56,6 +68,11 @@ export default function SentimentBarChart({ candidatos }: { candidatos: UrnaCand
             <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "1px" }}>
               {c.pos} a favor · {c.neg} en contra · {c.neu} neutro · {c.menciones} opiniones
             </div>
+            {porRedTexto(c.por_red) && (
+              <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "1px", opacity: 0.85 }}>
+                Por red: {porRedTexto(c.por_red)}
+              </div>
+            )}
           </div>
         ))}
       </div>

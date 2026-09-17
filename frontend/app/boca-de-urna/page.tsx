@@ -63,6 +63,14 @@ export default function BocaDeUrnaPage() {
             )}
             <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "12px" }}>
               {data.meta.total_posts} publicaciones analizadas · {data.meta.posts_electorales} electorales
+              {data.meta.bloques && data.meta.bloques.length > 0 && (
+                <span>
+                  {" · por bloque: "}
+                  {data.meta.bloques
+                    .map((b) => `${({ twitter: "X", instagram: "IG", tiktok: "TikTok" } as Record<string, string>)[b.red] || b.red} ${b.encontrados}`)
+                    .join(" · ")}
+                </span>
+              )}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: "24px", alignItems: "start" }}>
               <section style={{ display: "flex", flexDirection: "column", gap: "20px", minWidth: 0 }}>
