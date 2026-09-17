@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import UrnaParamsBar from "@/components/urna/UrnaParamsBar";
 import DisclaimerBanner from "@/components/urna/DisclaimerBanner";
-import { runBocaDeUrna, UrnaRequest, UrnaResponse, UrnaStatus } from "@/lib/urnaApi";
+import { runBocaDeUrnaAsync, UrnaRequest, UrnaResponse, UrnaProgress } from "@/lib/urnaApi";
 import SentimentBarChart from "@/components/urna/SentimentBarChart";
 import EvidencePanel from "@/components/urna/EvidencePanel";
 import ComparisonTable from "@/components/urna/ComparisonTable";
@@ -15,17 +15,16 @@ export default function BocaDeUrnaPage() {
   const [data, setData] = useState<UrnaResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [progress, setProgress] = useState<UrnaProgress | null>(null);
 
   const run = useCallback(async (req: UrnaRequest) => {
-    setLoading(true); setError(null); setStatus(null); setData(null);
+    setLoading(true); setError(null); setProgress({ phase: "Iniciando…", pct: 0 }); setData(null);
     try {
-      const res = await runBocaDeUrna(req, (s: UrnaStatus) => setStatus(
-        s === "waking" ? "El servidor estaba en reposo. Despertándolo… puede tardar ~40s." : "Conectando…"));
+      const res = await runBocaDeUrnaAsync(req, (p: UrnaProgress) => setProgress(p));
       setData(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al conectar con el servidor");
-    } finally { setLoading(false); setStatus(null); }
+    } finally { setLoading(false); setProgress(null); }
   }, []);
 
   return (
@@ -33,10 +32,19 @@ export default function BocaDeUrnaPage() {
       <UrnaParamsBar loading={loading} onRun={run} />
       <div style={{ flex: 1, overflow: "auto", padding: "20px 24px" }}>
         <DisclaimerBanner texto={data?.meta.disclaimer || DEFAULT_DISCLAIMER} />
-        {loading && status && (
-          <div style={{ padding: "12px 16px", borderRadius: "var(--radius-sm)",
-            background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.3)", color: "#93C5FD", fontSize: "13px" }}>
-            ⏳ {status}
+        {loading && progress && (
+          <div style={{ padding: "12px 16px", borderRadius: "var(--radius-sm)", marginBottom: "16px",
+            background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.3)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", color: "#93C5FD", marginBottom: "6px" }}>
+              <span>⏳ {progress.phase}</span>
+              <span>{Math.round(progress.pct)}%</span>
+            </div>
+            <div style={{ height: "8px", background: "rgba(148,163,184,0.25)", borderRadius: "4px", overflow: "hidden" }}>
+              <div style={{ width: `${Math.max(3, progress.pct)}%`, height: "100%", background: "#3B82F6", transition: "width 0.4s ease" }} />
+            </div>
+            <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "6px" }}>
+              El análisis corre en segundo plano y puede tardar 2-4 minutos. No cierres esta pestaña.
+            </div>
           </div>
         )}
         {error && (

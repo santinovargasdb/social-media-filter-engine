@@ -33,8 +33,21 @@ export interface UrnaRequest {
   pollster_csv: string; auto_consultoras: boolean;
 }
 
-export type UrnaStatus = "connecting" | "waking";
-const TIMEOUT_MS = 120_000;
+export interface UrnaProgress { phase: string; pct: number; }
+export interface UrnaJobStatus {
+  state: "running" | "done" | "error";
+  progress: UrnaProgress;
+  result: UrnaResponse | null;
+  error: string | null;
+}
+
+// El análisis corre en SEGUNDO PLANO en el backend (puede tardar ~2-4 min con el
+// corpus grande). Por eso el frontend arranca un trabajo y consulta su estado, en
+// vez de esperar una sola request larga que chocaría con cualquier timeout.
+const START_TIMEOUT_MS = 90_000;   // el /start es rápido, pero puede tener que despertar Render (~40s)
+const POLL_TIMEOUT_MS = 30_000;
+const POLL_INTERVAL_MS = 2_500;
+const MAX_WAIT_MS = 10 * 60_000;   // tope de seguridad para no consultar para siempre
 
 async function post(path: string, body: unknown, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
@@ -51,33 +64,51 @@ async function post(path: string, body: unknown, timeoutMs: number): Promise<Res
   }
 }
 
-export async function runBocaDeUrna(
-  req: UrnaRequest,
-  onStatus?: (s: UrnaStatus) => void,
-): Promise<UrnaResponse> {
-  const attempt = async (): Promise<UrnaResponse> => {
-    const res = await post("/api/boca-de-urna", req, TIMEOUT_MS);
-    if (!res.ok) {
-      let detail = "";
-      try { detail = (await res.json())?.detail || ""; } catch { /* sin body */ }
-      const err = new Error(detail || `Falló: ${res.status} ${res.statusText}`) as Error & { fromResponse?: boolean };
-      err.fromResponse = true;
-      throw err;
-    }
-    return res.json();
-  };
+async function detailOrDefault(res: Response, fallback: string): Promise<string> {
+  try { return (await res.json())?.detail || fallback; } catch { return fallback; }
+}
 
-  onStatus?.("connecting");
+export async function startBocaDeUrna(req: UrnaRequest): Promise<string> {
+  const res = await post("/api/boca-de-urna/start", req, START_TIMEOUT_MS);
+  if (!res.ok) throw new Error(await detailOrDefault(res, `No se pudo iniciar el análisis (${res.status}).`));
+  return (await res.json()).job_id as string;
+}
+
+async function fetchStatus(jobId: string): Promise<UrnaJobStatus> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), POLL_TIMEOUT_MS);
   try {
-    return await attempt();
-  } catch {
-    onStatus?.("waking");
+    const res = await fetch(`${API_BASE}/api/boca-de-urna/status/${jobId}`, { signal: controller.signal });
+    if (!res.ok) throw new Error(await detailOrDefault(res, `Error consultando el estado (${res.status}).`));
+    return res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Arranca el análisis y consulta su estado hasta que termina. Reporta el progreso
+// vía onProgress para la barra. Un fallo transitorio de red al consultar no aborta:
+// se reintenta hasta el tope de seguridad (Render gratis puede tardar en despertar).
+export async function runBocaDeUrnaAsync(
+  req: UrnaRequest,
+  onProgress?: (p: UrnaProgress) => void,
+): Promise<UrnaResponse> {
+  const jobId = await startBocaDeUrna(req);
+  const started = Date.now();
+  for (;;) {
+    await sleep(POLL_INTERVAL_MS);
+    let st: UrnaJobStatus;
     try {
-      return await attempt();
+      st = await fetchStatus(jobId);
     } catch (e) {
-      const err = e as Error & { fromResponse?: boolean };
-      if (err?.fromResponse && err.message && !err.message.startsWith("Falló:")) throw new Error(err.message);
-      throw new Error("No se pudo conectar con el servidor. Puede estar despertando del modo reposo; esperá unos segundos y reintentá.");
+      if (Date.now() - started > MAX_WAIT_MS) throw e;
+      continue;  // reintento transitorio
     }
+    if (st.state === "done" && st.result) return st.result;
+    if (st.state === "error") throw new Error(st.error || "El análisis falló.");
+    onProgress?.(st.progress);
+    if (Date.now() - started > MAX_WAIT_MS) throw new Error("El análisis tardó demasiado. Reintentá.");
   }
 }
