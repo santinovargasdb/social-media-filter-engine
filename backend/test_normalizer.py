@@ -30,6 +30,23 @@ def test_fetch_posts_pagina_para_traer_mas(monkeypatch):
     assert llamadas and all(pp > 1 for pp in llamadas)  # pidió más de una página
 
 
+# ── fetch_raw_posts: paginación de la urna ────────────────────────────────────
+def test_fetch_raw_posts_pagina(monkeypatch):
+    """La Boca de Urna debe poder paginar sus búsquedas para llenar un corpus grande."""
+    llamadas = []
+
+    def fake_search(termino, network, max_results=10, fecha_desde=None,
+                    accounts=None, country="ar", pages=1):
+        llamadas.append(pages)
+        return [{"title": "t", "snippet": "x",
+                 "url": f"https://x.com/u/status/{network}", "date": ""}]
+
+    monkeypatch.setattr(nz, "search_serpapi", fake_search)
+    monkeypatch.setattr(nz, "_translate_query_for_country", lambda t, c: t)
+    posts, up = nz.fetch_raw_posts("milei", networks=["twitter"], pages=2)
+    assert llamadas == [2]
+
+
 # ── _is_specific_post_url ─────────────────────────────────────────────────────
 def test_is_specific_post_url_instagram():
     assert nz._is_specific_post_url("instagram", "https://www.instagram.com/p/Cabc/")

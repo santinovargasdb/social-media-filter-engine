@@ -68,15 +68,18 @@ CANDIDATOS_DEFAULT = [
 # Cuántos posts (como máximo) aporta cada término de búsqueda al corpus. Acota lo
 # que trae la búsqueda general para dejar lugar a las búsquedas por candidato (si
 # no, el término general coparía el corpus y volveríamos a ver un solo candidato).
-POSTS_PER_TERM = 3
-# Tope duro de posts que se mandan al clasificador electoral. Dimensionado para que
-# TODOS los candidatos de la lista tengan lugar (general + 12 candidatos × 3 ≈ 39)
-# y a la vez el análisis quede CÓMODO bajo el timeout de 120s: con 40 posts y lotes
-# de 20 son solo 2 lotes de Gemini, que corren en UNA tanda (ver concurrency abajo).
-# 52 posts / 3 lotes en 2 tandas llegaban a rozar los 120s cuando Gemini iba lento.
-ELECTORAL_MAX_POSTS = 40
+# Subido de 3 a 15: la Boca de Urna ahora corre ASÍNCRONA (jobs.py), sin el techo de
+# 120s, así que cada candidato puede aportar muchas más menciones.
+POSTS_PER_TERM = 15
+# Páginas de SerpAPI por búsqueda de la urna (paginación reusada de search_serpapi).
+# 2 => hasta ~20 crudos por red/término antes del tope POSTS_PER_TERM. Editable.
+URNA_SERP_PAGES = 2
+# Tope duro de posts que se mandan al clasificador electoral. Antes 40 (por el timeout
+# de 120s). Con el análisis async se sube a 200: ~10 lotes de Gemini, que tardan más
+# (~2-4 min) pero ya no chocan con ningún timeout HTTP. Editable.
+ELECTORAL_MAX_POSTS = 200
 # El clasificador electoral corre en lotes de este tamaño (una llamada a Gemini por
-# lote). 20 => 40 posts entran en 2 lotes, que caben en una sola tanda paralela.
+# lote). 20 => 200 posts entran en ~10 lotes.
 ELECTORAL_BATCH_SIZE = 20
 
 # ── Concurrencia (clave para no exceder el timeout de 120s del frontend) ──────
@@ -87,7 +90,9 @@ ELECTORAL_BATCH_SIZE = 20
 FETCH_CONCURRENCY = 5
 # Gemini: pool bajo para no gatillar los rate-limits del free-tier (run_with_rotation
 # ya maneja 429/503, pero mejor no provocarlos con demasiadas llamadas simultáneas).
-ELECTORAL_BATCH_CONCURRENCY = 2
+# Subido a 3 con el análisis async (más lotes en paralelo sin presión de 120s), pero
+# se mantiene bajo para no disparar el rate-limit del free-tier de Gemini.
+ELECTORAL_BATCH_CONCURRENCY = 3
 
 # Redes para las búsquedas POR CANDIDATO. La opinión electoral vive sobre todo en X,
 # así que las búsquedas por candidato van solo a X para ahorrar cuota de SerpAPI:
@@ -374,11 +379,16 @@ def _merge_pollster_rows(auto_rows: list[dict], manual_rows: list[dict]) -> list
 
 
 def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
-                     country: str, pollster_csv: str, auto_consultoras: bool = False) -> dict:
+                     country: str, pollster_csv: str, auto_consultoras: bool = False,
+                     progress_cb=None) -> dict:
     """Orquesta la boca de urna. Arma el corpus con una búsqueda general MÁS una
     búsqueda dedicada por cada candidato (para captar varias opiniones), corre el
     análisis electoral y arma el payload. Lanza UpstreamUnavailableError
-    (Gemini/SerpAPI caído) o ValueError (CSV con header inválido)."""
+    (Gemini/SerpAPI caído) o ValueError (CSV con header inválido).
+
+    `progress_cb(phase: str, pct: float)` (opcional) reporta el avance para el modo
+    async (jobs.py); si no se pasa, es no-op (los llamados síncronos no cambian)."""
+    _p = progress_cb or (lambda phase, pct: None)
     # 1) CSV primero: si el header es inválido, cortamos con ValueError (-> 400).
     pollster_rows, csv_warnings = parse_pollster_csv(pollster_csv)
     warnings = list(csv_warnings)
@@ -415,7 +425,7 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
         try:
             return normalizer.fetch_raw_posts(
                 termino=term, fecha_desde=date, keywords=keywords,
-                accounts=[], networks=nets, country=country,
+                accounts=[], networks=nets, country=country, pages=URNA_SERP_PAGES,
             )
         except Exception as e:  # una búsqueda que rompe no debe tumbar el análisis
             print(f"ERROR fetch_raw_posts term='{term}': {e}")
@@ -423,6 +433,7 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
 
     # Búsquedas en PARALELO (antes en serie -> >120s). ex.map preserva el orden de
     # search_specs, así el merge es determinístico (general primero, luego candidatos).
+    _p("Buscando publicaciones…", 10)
     with ThreadPoolExecutor(max_workers=min(FETCH_CONCURRENCY, len(search_specs))) as ex:
         resultados_por_termino = list(ex.map(_fetch, search_specs))
 
@@ -457,12 +468,14 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
                          "disclaimer": DISCLAIMER, "warnings": warnings}}
 
     # 3) Análisis electoral (ids estables Post_i).
+    _p(f"Analizando {len(posts)} publicaciones…", 40)
     posts_by_id = {f"Post_{i}": p for i, p in enumerate(posts)}
     analysis = analyze_posts_electoral(posts_by_id)
     if analysis is None:
         raise UpstreamUnavailableError(
             "Gemini no está disponible (cuota agotada o servicio caído). Reintentá en unos minutos.")
 
+    _p("Armando resultados…", 85)
     posts_electorales = sum(1 for a in analysis if a.get("es_electoral") and a.get("candidatos"))
 
     # 4) Agregación + evidencia + comparación.

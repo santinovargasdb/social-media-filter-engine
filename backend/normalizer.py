@@ -762,6 +762,7 @@ def fetch_raw_posts(
     accounts: list[str] | None = None,
     networks: list[str] | None = None,
     country: str = "ar",
+    pages: int = 1,
 ) -> tuple[list[dict], bool]:
     """Trae posts normalizados SIN el scoring de relevancia del monitor de prensa.
 
@@ -797,6 +798,7 @@ def fetch_raw_posts(
             fecha_desde=fecha_desde,
             accounts=accounts,
             country=country,
+            pages=pages,
         )
         if resultados is None:
             any_upstream = True

@@ -217,6 +217,25 @@ def test_run_boca_de_urna_flujo_completo(monkeypatch):
     assert milei_comp["consultoras"][0]["consultora"] == "X"
 
 
+def test_run_boca_de_urna_reporta_progreso(monkeypatch):
+    """El análisis async necesita reportar progreso: run_boca_de_urna llama a
+    progress_cb(phase, pct) en los hitos, con pct no decreciente."""
+    import normalizer, gemini_client as gc
+    posts = [{"id": "1", "network": "twitter", "author": "", "author_url": "", "text": "Milei",
+              "date": "", "post_url": "u1", "relevance_score": 50, "relevance_level": "media",
+              "matched_terms": [], "video_url": None}]
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: (posts, False))
+    monkeypatch.setattr(gc, "run_with_rotation", lambda prompt: ([
+        {"id": "Post_0", "es_electoral": True, "cita": "Milei",
+         "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.9}]}], None))
+    hitos = []
+    el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar",
+                        pollster_csv="", progress_cb=lambda phase, pct: hitos.append((phase, pct)))
+    assert hitos                                              # reportó progreso
+    assert [p for _, p in hitos] == sorted(p for _, p in hitos)   # pct no decreciente
+    assert any("analiz" in p.lower() for p, _ in hitos)      # menciona la fase de análisis
+
+
 def test_run_boca_de_urna_cero_posts(monkeypatch):
     import normalizer
     monkeypatch.setattr(normalizer, "fetch_raw_posts", lambda **kw: ([], False))

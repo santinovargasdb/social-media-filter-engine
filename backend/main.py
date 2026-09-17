@@ -9,10 +9,12 @@ from typing import List, Literal, Optional
 from normalizer import fetch_posts, UpstreamUnavailableError
 from docx_generator import generate_docx
 import electoral
+import jobs
 import asyncio
 import datetime
 import io
 import os
+import threading
 
 app = FastAPI()
 
@@ -165,6 +167,53 @@ async def boca_de_urna_endpoint(request: BocaDeUrnaRequest):
     except Exception as e:
         print(f"Error interno (boca de urna): {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/boca-de-urna/start")
+async def boca_de_urna_start(request: BocaDeUrnaRequest):
+    """Arranca el análisis en SEGUNDO PLANO y devuelve un job_id al instante. El
+    trabajo pesado (que puede tardar ~2-4 min con el corpus grande) corre en un hilo
+    daemon, fuera del timeout HTTP; el frontend consulta /status/{job_id}."""
+    job_id = jobs.create()
+
+    def _run():
+        try:
+            result = electoral.run_boca_de_urna(
+                keywords=request.keywords,
+                networks=request.networks,
+                date=request.date,
+                country=(request.country or "ar").strip().lower(),
+                pollster_csv=request.pollster_csv,
+                auto_consultoras=request.auto_consultoras,
+                progress_cb=lambda phase, pct: jobs.set_progress(job_id, phase, pct),
+            )
+            jobs.set_result(job_id, result)
+        except (ValueError, electoral.UpstreamUnavailableError) as e:
+            # Errores esperables (CSV inválido / upstream caído): mensaje al usuario.
+            jobs.set_error(job_id, str(e))
+        except Exception as e:
+            print(f"Error interno (boca de urna async): {e}")
+            jobs.set_error(job_id, str(e))
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.get("/api/boca-de-urna/status/{job_id}")
+async def boca_de_urna_status(job_id: str):
+    """Estado del trabajo async: running | done | error, con progreso y resultado."""
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Trabajo no encontrado (pudo vencer o reiniciarse el servidor). "
+                   "Reintentá el análisis.")
+    return {
+        "state": job["state"],
+        "progress": job["progress"],
+        "result": job["result"],
+        "error": job["error"],
+    }
 
 
 class GenerateDocxRequest(BaseModel):
