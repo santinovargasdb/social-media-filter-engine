@@ -23,12 +23,19 @@ Variables de entorno:
 - X_SCRAPER_API_KEY: API key del proveedor de X (trial gratis, sin tarjeta).
 """
 import os
+import time
 
 import requests
 
 import normalizer
 
 X_SCRAPER_API_KEY = os.environ.get("X_SCRAPER_API_KEY", "")
+
+# La API tira 429 ante ráfagas (el análisis dispara ~14 búsquedas seguidas). Como el
+# análisis es async (sin apuro de 120s), reintentamos con backoff en vez de perder la
+# búsqueda. Editable.
+_X_MAX_RETRIES = 4
+_X_BACKOFF = 2.0  # seg base (2, 4, 6… por reintento)
 
 # Endpoint de búsqueda avanzada de twitterapi.io (acepta la sintaxis de búsqueda
 # avanzada de X). VERIFICAR endpoint/campos/headers exactos contra la API real al
@@ -71,14 +78,24 @@ def _x_http(query: str, cursor: str | None) -> tuple[dict | None, bool]:
     params = {"query": query, "queryType": "Latest"}
     if cursor:
         params["cursor"] = cursor
-    try:
-        resp = requests.get(_X_API_URL, params=params,
-                            headers={"X-API-Key": X_SCRAPER_API_KEY}, timeout=_X_TIMEOUT)
-        resp.raise_for_status()
-        return resp.json(), True
-    except requests.exceptions.RequestException as e:
-        print(f"ERROR X scraper: {e}")
-        return None, False
+    for intento in range(_X_MAX_RETRIES):
+        try:
+            resp = requests.get(_X_API_URL, params=params,
+                                headers={"X-API-Key": X_SCRAPER_API_KEY}, timeout=_X_TIMEOUT)
+            # 429 (rate-limit) o 5xx: transitorio -> backoff y reintento (el análisis
+            # dispara muchas búsquedas seguidas y la API throttlea las ráfagas).
+            if (resp.status_code == 429 or resp.status_code >= 500) and intento < _X_MAX_RETRIES - 1:
+                time.sleep(_X_BACKOFF * (intento + 1))
+                continue
+            resp.raise_for_status()
+            return resp.json(), True
+        except requests.exceptions.RequestException as e:
+            if intento < _X_MAX_RETRIES - 1:
+                time.sleep(_X_BACKOFF * (intento + 1))
+                continue
+            print(f"ERROR X scraper: {e}")
+            return None, False
+    return None, False
 
 
 def _tweet_to_src(tw: dict) -> dict:

@@ -580,11 +580,11 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
     bloques_status = [b["status"] for b in bloques]
 
     if total_posts == 0:
-        # Distinguir "SerpAPI caído" (503) de "no hay resultados" (vacío legítimo).
+        # Distinguir "la búsqueda falló" (upstream) de "no hay resultados" (vacío legítimo).
         if any_upstream:
             raise UpstreamUnavailableError(
-                "El buscador (SerpAPI) no respondió, probablemente por límite de "
-                "cuota. Reintentá en un minuto.")
+                "La búsqueda de publicaciones no respondió (límite de cuota de SerpAPI "
+                "o rate-limit del scraper). Reintentá en un minuto.")
         warnings.append("No se encontraron publicaciones para el término buscado.")
         return {"candidatos": [], "evidencia": [], "comparacion": [],
                 "meta": {"total_posts": 0, "posts_electorales": 0, "analizados": 0,
@@ -593,8 +593,11 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
     # Se buscó pero NINGÚN bloque logró clasificar (todos los lotes fallaron) y hubo
     # upstream: es un 503 (Gemini caído/sin cuota), no "no hay candidatos".
     if analizados == 0 and any_upstream:
+        # Se trajeron posts pero no se clasificó ninguno: el análisis (Gemini) no
+        # respondió (típico: rate-limit/cuota del free-tier). NO es que "no haya posts".
         raise UpstreamUnavailableError(
-            "Gemini no está disponible (cuota agotada o servicio caído). Reintentá en unos minutos.")
+            "El análisis con IA (Gemini) no pudo clasificar las publicaciones "
+            "(límite de cuota o rate-limit). Reintentá en unos minutos.")
 
     _p("Armando resultados…", 85)
     # 3) Combinar bloques: candidatos con desglose por_red + evidencia + comparación.

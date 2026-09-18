@@ -69,6 +69,43 @@ def test_scrape_x_error_http_marca_upstream(monkeypatch):
     assert posts == [] and up is True   # igual que fetch_raw_posts ante upstream
 
 
+class _Resp:
+    def __init__(self, code, data=None):
+        self.status_code = code
+        self._data = data or {}
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise scrapers.requests.exceptions.HTTPError(str(self.status_code))
+    def json(self):
+        return self._data
+
+
+def test_x_http_reintenta_ante_429(monkeypatch):
+    """El 429 (rate-limit por ráfaga) es transitorio: se reintenta con backoff en vez
+    de perder la búsqueda — esa era la causa de que trajera pocos posts."""
+    monkeypatch.setattr(scrapers, "X_SCRAPER_API_KEY", "k")
+    monkeypatch.setattr(scrapers, "_X_BACKOFF", 0)  # sin espera real en el test
+    llamadas = {"n": 0}
+
+    def fake_get(url, params, headers, timeout):
+        llamadas["n"] += 1
+        if llamadas["n"] == 1:
+            return _Resp(429)                     # primera: throttled
+        return _Resp(200, {"tweets": [], "has_next_page": False, "next_cursor": ""})
+
+    monkeypatch.setattr(scrapers.requests, "get", fake_get)
+    data, ok = scrapers._x_http("Javier Milei", None)
+    assert ok is True and llamadas["n"] == 2       # reintentó tras el 429 y salió OK
+
+
+def test_x_http_devuelve_none_si_persiste_el_error(monkeypatch):
+    monkeypatch.setattr(scrapers, "X_SCRAPER_API_KEY", "k")
+    monkeypatch.setattr(scrapers, "_X_BACKOFF", 0)
+    monkeypatch.setattr(scrapers.requests, "get", lambda url, **kw: _Resp(429))
+    data, ok = scrapers._x_http("q", None)
+    assert data is None and ok is False
+
+
 def test_scrape_network_ig_y_tiktok_no_implementados_todavia():
     with pytest.raises(NotImplementedError):
         scrapers.scrape_network("instagram", "Milei")
