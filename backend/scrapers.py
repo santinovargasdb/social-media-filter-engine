@@ -31,11 +31,25 @@ import normalizer
 
 X_SCRAPER_API_KEY = os.environ.get("X_SCRAPER_API_KEY", "")
 
-# La API tira 429 ante ráfagas (el análisis dispara ~14 búsquedas seguidas). Como el
-# análisis es async (sin apuro de 120s), reintentamos con backoff en vez de perder la
-# búsqueda. Editable.
+# La API tira 429 ante ráfagas (el análisis dispara ~17 búsquedas seguidas). Estrategia:
+# 1) PACING proactivo: un intervalo mínimo entre requests para NO gatillar el 429 de
+#    entrada (mucho más rápido que reintentar después). 2) Reintento con backoff como
+#    red de seguridad si igual cae un 429. Como el análisis es async, esperar no molesta.
+# Todo editable.
+_X_MIN_INTERVAL = 1.2   # seg mínimos entre requests a X (pacing)
 _X_MAX_RETRIES = 4
-_X_BACKOFF = 2.0  # seg base (2, 4, 6… por reintento)
+_X_BACKOFF = 2.0        # seg base del reintento (2, 4, 6…)
+_last_x_call = 0.0      # timestamp del último request (para el pacing)
+
+
+def _pace_x() -> None:
+    """Espera lo necesario para respetar `_X_MIN_INTERVAL` entre requests a X. El
+    análisis de la urna corre en un solo hilo, así que un timestamp de módulo alcanza."""
+    global _last_x_call
+    espera = _X_MIN_INTERVAL - (time.monotonic() - _last_x_call)
+    if espera > 0:
+        time.sleep(espera)
+    _last_x_call = time.monotonic()
 
 # Endpoint de búsqueda avanzada de twitterapi.io (acepta la sintaxis de búsqueda
 # avanzada de X). VERIFICAR endpoint/campos/headers exactos contra la API real al
@@ -78,6 +92,7 @@ def _x_http(query: str, cursor: str | None) -> tuple[dict | None, bool]:
     params = {"query": query, "queryType": "Latest"}
     if cursor:
         params["cursor"] = cursor
+    _pace_x()  # pacing proactivo: separar los requests para no gatillar el 429
     for intento in range(_X_MAX_RETRIES):
         try:
             resp = requests.get(_X_API_URL, params=params,

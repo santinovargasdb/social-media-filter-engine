@@ -84,7 +84,8 @@ def test_x_http_reintenta_ante_429(monkeypatch):
     """El 429 (rate-limit por ráfaga) es transitorio: se reintenta con backoff en vez
     de perder la búsqueda — esa era la causa de que trajera pocos posts."""
     monkeypatch.setattr(scrapers, "X_SCRAPER_API_KEY", "k")
-    monkeypatch.setattr(scrapers, "_X_BACKOFF", 0)  # sin espera real en el test
+    monkeypatch.setattr(scrapers, "_X_BACKOFF", 0)      # sin espera real en el test
+    monkeypatch.setattr(scrapers, "_X_MIN_INTERVAL", 0)  # sin pacing en el test
     llamadas = {"n": 0}
 
     def fake_get(url, params, headers, timeout):
@@ -101,6 +102,7 @@ def test_x_http_reintenta_ante_429(monkeypatch):
 def test_x_http_devuelve_none_si_persiste_el_error(monkeypatch):
     monkeypatch.setattr(scrapers, "X_SCRAPER_API_KEY", "k")
     monkeypatch.setattr(scrapers, "_X_BACKOFF", 0)
+    monkeypatch.setattr(scrapers, "_X_MIN_INTERVAL", 0)
     monkeypatch.setattr(scrapers.requests, "get", lambda url, **kw: _Resp(429))
     data, ok = scrapers._x_http("q", None)
     assert data is None and ok is False
