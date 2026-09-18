@@ -232,6 +232,22 @@ async def debug_scrape_count(network: str, q: str, pages: int = 1):
             "sample_urls": [p.get("post_url") for p in posts[:3]]}
 
 
+@app.get("/api/debug/x-raw")
+async def debug_x_raw(q: str = "Milei"):
+    """DIAGNÓSTICO (temporal): request CRUDO a la API de X para ver el status HTTP y el
+    mensaje real (402=sin saldo, 401/403=key inválida, 429=rate-limit, 5xx=API caída).
+    `key_set` confirma que la key está cargada sin revelarla. Sin secretos."""
+    import requests as rq
+    import scrapers
+    try:
+        resp = rq.get(scrapers._X_API_URL, params={"query": q, "queryType": "Latest"},
+                      headers={"X-API-Key": scrapers.X_SCRAPER_API_KEY}, timeout=30)
+        return {"status": resp.status_code, "body": resp.text[:400],
+                "key_set": bool(scrapers.X_SCRAPER_API_KEY)}
+    except Exception as e:
+        return {"error": str(e), "key_set": bool(scrapers.X_SCRAPER_API_KEY)}
+
+
 class GenerateDocxRequest(BaseModel):
     posts: List[PostOut]
 
