@@ -113,6 +113,10 @@ pip install -r requirements.txt
 # Crear backend/.env con las claves:
 #   SERPAPI_API_KEY=tu_clave
 #   GEMINI_API_KEY=tu_clave
+#   # (opcional) Boca de Urna vía scraping en vez de SerpAPI:
+#   URNA_FETCH_BACKEND=scraper        # default: serpapi (sin cambios)
+#   URNA_SCRAPER_NETWORKS=twitter     # redes con scraper; vacío = todas
+#   X_SCRAPER_API_KEY=tu_clave_trial  # proveedor de scraping de X (ej. twitterapi.io)
 
 python main.py                   # o: uvicorn main:app --reload
 # → http://localhost:8000
@@ -151,9 +155,10 @@ python -m pytest -q
 
 1. Crear un **Web Service** apuntando a `backend/` (Render usa el `Procfile`: `uvicorn main:app`).
 2. En **Environment**, agregar:
-   - `SERPAPI_API_KEY`
+   - `SERPAPI_API_KEY` (Monitor de Medios; y Boca de Urna si el flag de scraping está apagado).
    - `GEMINI_API_KEY`
    - `ALLOWED_ORIGINS` (opcional; orígenes permitidos por CORS, separados por coma).
+   - **Scraping de la Boca de Urna (opcional, apagado por defecto):** `URNA_FETCH_BACKEND=scraper` para que la urna use scraping en vez de SerpAPI; `URNA_SCRAPER_NETWORKS` (coma-separado, ej. `twitter`) para prenderlo por red y dejar el resto en SerpAPI; `X_SCRAPER_API_KEY` con la clave del proveedor de X. El Monitor de Medios sigue siempre en SerpAPI.
 
 > Nota: en el plan free de Render la instancia se duerme tras ~15 min de inactividad y la primera request luego tarda ~40-50 s. El workflow `keep-warm.yml` mitiga esos cold-starts.
 

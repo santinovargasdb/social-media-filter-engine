@@ -12,6 +12,7 @@ vía gemini_client. Stateless.
 import csv
 import io
 import json
+import os
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -420,6 +421,36 @@ def _merge_pollster_rows(auto_rows: list[dict], manual_rows: list[dict]) -> list
     return list(merged.values())
 
 
+def _use_scraper_for(network: str) -> bool:
+    """True si esta red debe obtener posts por SCRAPING en vez de SerpAPI. Controlado
+    por env vars: `URNA_FETCH_BACKEND=scraper` prende el scraper; `URNA_SCRAPER_NETWORKS`
+    (coma-separado) lo acota a esas redes (vacío = todas). Por defecto (serpapi) no
+    cambia nada. El Monitor de Medios (fetch_posts) NO pasa por acá."""
+    if os.environ.get("URNA_FETCH_BACKEND", "serpapi").strip().lower() != "scraper":
+        return False
+    nets = os.environ.get("URNA_SCRAPER_NETWORKS", "").strip().lower()
+    if not nets:
+        return True
+    return network in {n.strip() for n in nets.split(",") if n.strip()}
+
+
+def _fetch_for_block(network: str, termino: str, keywords: list[str],
+                     date: str | None, country: str, pages: int) -> tuple[list[dict], bool]:
+    """Dispatcher del feature flag: SCRAPER para las redes prendidas, SerpAPI para el
+    resto (comportamiento por defecto). Devuelve `(posts, hubo_upstream)`."""
+    if _use_scraper_for(network):
+        try:
+            import scrapers  # import diferido: aísla la capa de scraping
+            return scrapers.scrape_network(network, termino, fecha_desde=date,
+                                           keywords=keywords, accounts=[],
+                                           country=country, pages=pages)
+        except NotImplementedError:
+            print(f"scraper[{network}] no implementado todavía — cae a SerpAPI.")
+    return normalizer.fetch_raw_posts(
+        termino=termino, fecha_desde=date, keywords=keywords,
+        accounts=[], networks=[network], country=country, pages=pages)
+
+
 def run_network_block(network: str, termino: str, keywords: list[str],
                       candidatos: list[str], date: str | None, country: str) -> tuple[dict, bool]:
     """BLOQUE autónomo de UNA red. Hace SUS búsquedas (general + por candidato según
@@ -440,11 +471,9 @@ def run_network_block(network: str, termino: str, keywords: list[str],
     any_up = False
     for term, pages, cap in specs:
         try:
-            raw, up = normalizer.fetch_raw_posts(
-                termino=term, fecha_desde=date, keywords=keywords,
-                accounts=[], networks=[network], country=country, pages=pages)
+            raw, up = _fetch_for_block(network, term, keywords, date, country, pages)
         except Exception as e:  # una búsqueda que rompe no debe tumbar el bloque
-            print(f"ERROR fetch_raw_posts[{network}] term='{term}': {e}")
+            print(f"ERROR fetch[{network}] term='{term}': {e}")
             raw, up = [], True
         any_up = any_up or up
         added = 0

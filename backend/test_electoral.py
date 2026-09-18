@@ -414,6 +414,59 @@ def test_run_network_block_usa_el_contexto_de_su_red(monkeypatch):
     assert up is False
 
 
+def test_run_network_block_usa_serpapi_por_defecto(monkeypatch):
+    """Sin el feature flag, el bloque sigue usando SerpAPI (fetch_raw_posts) — cero
+    cambio de comportamiento hasta prender el scraper."""
+    import normalizer
+    monkeypatch.delenv("URNA_FETCH_BACKEND", raising=False)
+    usados = []
+    def fake_fetch(**kw):
+        usados.append("serpapi")
+        return [], False
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", fake_fetch)
+    monkeypatch.setattr(el, "analyze_posts_electoral", lambda pbi, network_context="": [])
+    el.run_network_block("twitter", "Milei", ["Milei"], ["Javier Milei"], None, "ar")
+    assert "serpapi" in usados
+
+
+def test_run_network_block_usa_scraper_si_flag_activo(monkeypatch):
+    """Con URNA_FETCH_BACKEND=scraper y la red en URNA_SCRAPER_NETWORKS, el bloque
+    obtiene los posts vía scrapers.scrape_network, NO vía SerpAPI."""
+    import normalizer, scrapers
+    monkeypatch.setenv("URNA_FETCH_BACKEND", "scraper")
+    monkeypatch.setenv("URNA_SCRAPER_NETWORKS", "twitter")
+    usados = []
+    def fake_scrape(network, termino, **kw):
+        usados.append(("scraper", network))
+        return [], False
+    def fake_fetch(**kw):
+        usados.append(("serpapi", kw["networks"][0]))
+        return [], False
+    monkeypatch.setattr(scrapers, "scrape_network", fake_scrape)
+    monkeypatch.setattr(normalizer, "fetch_raw_posts", fake_fetch)
+    monkeypatch.setattr(el, "analyze_posts_electoral", lambda pbi, network_context="": [])
+    el.run_network_block("twitter", "Milei", ["Milei"], ["Javier Milei"], None, "ar")
+    assert ("scraper", "twitter") in usados
+    assert all(kind != "serpapi" for kind, _ in usados)  # X no cayó a SerpAPI
+
+
+def test_run_network_block_flag_por_red_deja_otras_en_serpapi(monkeypatch):
+    """URNA_SCRAPER_NETWORKS='twitter' prende el scraper SOLO en X; Instagram sigue
+    en SerpAPI (permite migrar de a una red)."""
+    import normalizer, scrapers
+    monkeypatch.setenv("URNA_FETCH_BACKEND", "scraper")
+    monkeypatch.setenv("URNA_SCRAPER_NETWORKS", "twitter")
+    usados = []
+    monkeypatch.setattr(scrapers, "scrape_network",
+                        lambda network, termino, **kw: (usados.append(("scraper", network)), ([], False))[1])
+    monkeypatch.setattr(normalizer, "fetch_raw_posts",
+                        lambda **kw: (usados.append(("serpapi", kw["networks"][0])), ([], False))[1])
+    monkeypatch.setattr(el, "analyze_posts_electoral", lambda pbi, network_context="": [])
+    el.run_network_block("instagram", "Milei", ["Milei"], ["Javier Milei"], None, "ar")
+    assert ("serpapi", "instagram") in usados
+    assert ("scraper", "instagram") not in usados
+
+
 def test_run_boca_de_urna_bloques_por_red(monkeypatch):
     """Cada red es un BLOQUE autónomo: busca SOLO en su red. La general va por red; en
     X se busca a TODOS los candidatos, en IG/TikTok solo a los top_n; el candidato top
