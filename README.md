@@ -159,6 +159,7 @@ python -m pytest -q
    - `GEMINI_API_KEY`
    - `ALLOWED_ORIGINS` (opcional; orígenes permitidos por CORS, separados por coma).
    - **Scraping de la Boca de Urna (opcional, apagado por defecto):** `URNA_FETCH_BACKEND=scraper` para que la urna use scraping en vez de SerpAPI; `URNA_SCRAPER_NETWORKS` (coma-separado, ej. `twitter`) para prenderlo por red y dejar el resto en SerpAPI; `X_SCRAPER_API_KEY` con la clave del proveedor de X. El Monitor de Medios sigue siempre en SerpAPI.
+   - **Ritmo del scraper de X (según el plan del proveedor):** `X_SCRAPER_MIN_INTERVAL` (seg entre requests; default `1.2` para el *trial* con rate-limit agresivo — con **saldo pago** poné `0` y las corridas bajan a ~30-60s), `X_SCRAPER_MAX_RETRIES` (default `4`), `X_SCRAPER_BACKOFF` (default `2.0`).
 
 > Nota: en el plan free de Render la instancia se duerme tras ~15 min de inactividad y la primera request luego tarda ~40-50 s. El workflow `keep-warm.yml` mitiga esos cold-starts.
 

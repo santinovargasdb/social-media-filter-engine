@@ -35,10 +35,13 @@ X_SCRAPER_API_KEY = os.environ.get("X_SCRAPER_API_KEY", "")
 # 1) PACING proactivo: un intervalo mínimo entre requests para NO gatillar el 429 de
 #    entrada (mucho más rápido que reintentar después). 2) Reintento con backoff como
 #    red de seguridad si igual cae un 429. Como el análisis es async, esperar no molesta.
-# Todo editable.
-_X_MIN_INTERVAL = 1.2   # seg mínimos entre requests a X (pacing)
-_X_MAX_RETRIES = 4
-_X_BACKOFF = 2.0        # seg base del reintento (2, 4, 6…)
+#
+# Configurables por env para poder afinar SIN redeploy de código:
+# - En el TRIAL (rate-limit agresivo): dejar el pacing alto (~1.2s) para no comerse 429.
+# - Con SALDO PAGO (rate-limit alto): poner X_SCRAPER_MIN_INTERVAL=0 → corridas de ~30-60s.
+_X_MIN_INTERVAL = float(os.environ.get("X_SCRAPER_MIN_INTERVAL", "1.2"))  # seg entre requests
+_X_MAX_RETRIES = int(os.environ.get("X_SCRAPER_MAX_RETRIES", "4"))
+_X_BACKOFF = float(os.environ.get("X_SCRAPER_BACKOFF", "2.0"))            # seg base del reintento
 _last_x_call = 0.0      # timestamp del último request (para el pacing)
 
 
