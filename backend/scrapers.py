@@ -54,8 +54,9 @@ def scrape_network(network: str, termino: str, fecha_desde: str | None = None,
 
 # ── X / Twitter (twitterapi.io) ───────────────────────────────────────────────
 def _x_query(termino: str, fecha_desde: str | None) -> str:
-    """Arma la query de búsqueda avanzada de X. `since:` acota por fecha desde."""
-    q = termino.strip()
+    """Arma la query de búsqueda avanzada de X. Sesga a español (lang:es) para
+    contenido argentino; `since:` acota por fecha desde."""
+    q = f"{termino.strip()} lang:es".strip()
     if fecha_desde:
         q = f"{q} since:{fecha_desde}".strip()
     return q

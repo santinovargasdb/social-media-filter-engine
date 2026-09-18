@@ -460,11 +460,15 @@ def run_network_block(network: str, termino: str, keywords: list[str],
     budget = NETWORK_SEARCH_BUDGET.get(network, _DEFAULT_BUDGET)
     # specs: (término, páginas, tope de aporte). La general acotada; los candidatos top
     # con más páginas; el resto según rest_pages (0 => no se busca individual).
+    # Búsqueda por candidato = SOLO el nombre (no "{cand} {termino}"): exigir la frase
+    # del tema además del nombre angosta demasiado el volumen (sobre todo en X, donde
+    # buscar el nombre solo trae muchísimo). Qué es electoral lo decide el clasificador,
+    # no la query. La general sí usa el término del tema como ancla.
     specs: list[tuple[str, int, int]] = [(termino, budget["general_pages"], GENERAL_TERM_MAX)]
     for i, cand in enumerate(candidatos):
         pages = budget["top_pages"] if i < budget["top_n"] else budget["rest_pages"]
         if pages > 0:
-            specs.append((f"{cand} {termino}".strip(), pages, CANDIDATE_TERM_MAX))
+            specs.append((cand, pages, CANDIDATE_TERM_MAX))
 
     posts: list[dict] = []
     seen: set[str] = set()
