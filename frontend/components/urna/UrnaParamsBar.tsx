@@ -16,6 +16,17 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
   const [csvName, setCsvName] = useState("");
   const [csvRows, setCsvRows] = useState(0);
   const [autoConsultoras, setAutoConsultoras] = useState(false);
+  // X viene tildado por defecto (es la red con datos hoy vía scraping); IG/TikTok
+  // quedan disponibles para cuando tengan su scraper.
+  const [networks, setNetworks] = useState<string[]>(["twitter"]);
+
+  const NETWORKS: { id: string; label: string }[] = [
+    { id: "twitter", label: "X" },
+    { id: "instagram", label: "IG" },
+    { id: "tiktok", label: "TikTok" },
+  ];
+  const toggleNetwork = (id: string) =>
+    setNetworks((cur) => (cur.includes(id) ? cur.filter((n) => n !== id) : [...cur, id]));
 
   const handleCsv = (file: File | null) => {
     if (!file) { setCsvText(""); setCsvName(""); setCsvRows(0); return; }
@@ -33,7 +44,7 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
   const submit = () => {
     onRun({
       keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
-      networks: ["twitter", "instagram", "tiktok"],
+      networks: networks.length ? networks : ["twitter"],
       date: date || null,
       country: country.trim().toLowerCase() || "ar",
       pollster_csv: csvText,
@@ -57,6 +68,16 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
              onChange={(e) => setCountry(e.target.value)} placeholder="país" title="Código ISO (ar, br, ...)" />
       <input style={{ ...field, width: "150px" }} type="date" value={date}
              onChange={(e) => setDate(e.target.value)} title="Desde" />
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "var(--text-secondary)" }}
+           title="Redes a analizar">
+        <span>Redes:</span>
+        {NETWORKS.map((n) => (
+          <label key={n.id} style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
+            <input type="checkbox" checked={networks.includes(n.id)} onChange={() => toggleNetwork(n.id)} />
+            {n.label}
+          </label>
+        ))}
+      </div>
       <label style={{ ...field, cursor: "pointer", color: "var(--smata-green-light, #4CAF50)" }}>
         ⬆ CSV consultoras
         <input type="file" accept=".csv" style={{ display: "none" }}
