@@ -410,7 +410,8 @@ def test_run_network_block_usa_el_contexto_de_su_red(monkeypatch):
                                      ["Javier Milei"], None, "ar")
     assert block["network"] == "tiktok"
     assert captured["ctx"] == el.NETWORK_CONTEXT["tiktok"]  # contexto propio de la red
-    assert block["status"] == {"red": "tiktok", "encontrados": 1, "analizados": 1}
+    assert block["status"]["red"] == "tiktok"
+    assert block["status"]["encontrados"] == 1 and block["status"]["analizados"] == 1
     assert up is False
 
 

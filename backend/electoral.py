@@ -473,12 +473,17 @@ def run_network_block(network: str, termino: str, keywords: list[str],
     posts: list[dict] = []
     seen: set[str] = set()
     any_up = False
+    crudos = 0       # total de posts crudos que trajeron las búsquedas (antes de dedup)
+    errores = 0      # búsquedas que fallaron (upstream/rate-limit)
     for term, pages, cap in specs:
         try:
             raw, up = _fetch_for_block(network, term, keywords, date, country, pages)
         except Exception as e:  # una búsqueda que rompe no debe tumbar el bloque
             print(f"ERROR fetch[{network}] term='{term}': {e}")
             raw, up = [], True
+        if up:
+            errores += 1
+        crudos += len(raw)
         any_up = any_up or up
         added = 0
         for pp in raw:
@@ -501,7 +506,11 @@ def run_network_block(network: str, termino: str, keywords: list[str],
     if analysis is None:  # todos los lotes fallaron por upstream
         any_up = True
         analysis = []
-    status = {"red": network, "encontrados": len(posts), "analizados": len(analysis)}
+    # `busquedas/crudos/errores` son diagnóstico: distinguen "las búsquedas por candidato
+    # fallan/rate-limit" (errores alto) de "la API devuelve siempre lo mismo" (crudos alto
+    # pero encontrados bajo por dedup).
+    status = {"red": network, "busquedas": len(specs), "crudos": crudos, "errores": errores,
+              "encontrados": len(posts), "analizados": len(analysis)}
     return {"network": network, "posts_by_id": posts_by_id,
             "analysis": analysis, "status": status}, any_up
 
