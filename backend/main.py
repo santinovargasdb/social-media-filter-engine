@@ -216,6 +216,22 @@ async def boca_de_urna_status(job_id: str):
     }
 
 
+@app.get("/api/debug/scrape-count")
+async def debug_scrape_count(network: str, q: str, pages: int = 1):
+    """DIAGNÓSTICO (temporal): corre SOLO el fetch del scraper para una query, SIN
+    Gemini. Devuelve cuántos posts trae y si hubo error upstream — para medir el
+    volumen real por búsqueda cuando la cuota de Gemini está agotada. Solo cuenta y
+    URLs públicas; sin secretos."""
+    import scrapers
+    try:
+        posts, up = scrapers.scrape_network(network, q, pages=pages)
+    except NotImplementedError as e:
+        return {"network": network, "q": q, "error": str(e)}
+    return {"network": network, "q": q, "pages": pages,
+            "encontrados": len(posts), "upstream": up,
+            "sample_urls": [p.get("post_url") for p in posts[:3]]}
+
+
 class GenerateDocxRequest(BaseModel):
     posts: List[PostOut]
 
