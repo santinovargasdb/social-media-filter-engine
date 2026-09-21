@@ -31,6 +31,11 @@ app.add_middleware(
 )
 
 
+# Mensaje genérico para errores inesperados (500): NO exponer str(e) al cliente
+# (puede traer paths, tokens, stacktrace). El detalle real se loguea server-side.
+_ERROR_INTERNO = "Error interno del servidor. Reintentá en unos minutos."
+
+
 class SearchRequest(BaseModel):
     networks: List[str] = []
     keywords: List[str] = []
@@ -129,7 +134,7 @@ async def search_endpoint(request: SearchRequest):
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         print(f"Error interno: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_ERROR_INTERNO)
 
 
 class BocaDeUrnaRequest(BaseModel):
@@ -166,7 +171,7 @@ async def boca_de_urna_endpoint(request: BocaDeUrnaRequest):
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         print(f"Error interno (boca de urna): {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_ERROR_INTERNO)
 
 
 @app.post("/api/boca-de-urna/start")
@@ -193,7 +198,7 @@ async def boca_de_urna_start(request: BocaDeUrnaRequest):
             jobs.set_error(job_id, str(e))
         except Exception as e:
             print(f"Error interno (boca de urna async): {e}")
-            jobs.set_error(job_id, str(e))
+            jobs.set_error(job_id, _ERROR_INTERNO)
 
     threading.Thread(target=_run, daemon=True).start()
     return {"job_id": job_id}
@@ -236,7 +241,7 @@ async def generate_docx_endpoint(request: GenerateDocxRequest):
         raise
     except Exception as e:
         print(f"Error generando DOCX: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_ERROR_INTERNO)
 
 
 if __name__ == "__main__":

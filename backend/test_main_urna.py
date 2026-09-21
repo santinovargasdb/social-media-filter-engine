@@ -94,6 +94,23 @@ def test_start_error_queda_en_estado_error(monkeypatch):
     assert st["state"] == "error" and "Gemini" in st["error"]
 
 
+def test_start_error_generico_no_filtra_el_mensaje_interno(monkeypatch):
+    """Un error inesperado (no ValueError/Upstream) NO debe filtrar str(e) crudo al
+    usuario (paths, tokens, stacktrace). Se muestra un mensaje genérico; el detalle
+    queda en los logs del servidor."""
+    SECRETO = "KeyError: '/ruta/interna' token=abc123secreto"
+
+    def boom(**kw):
+        raise RuntimeError(SECRETO)
+
+    monkeypatch.setattr(electoral, "run_boca_de_urna", boom)
+    r = asyncio.run(main.boca_de_urna_start(_req()))
+    st = _wait_done(r["job_id"])
+    assert st["state"] == "error"
+    assert SECRETO not in (st["error"] or "")        # no filtra el interno
+    assert "interno" in (st["error"] or "").lower()  # mensaje genérico
+
+
 def test_start_pasa_progress_cb_callable(monkeypatch):
     capturado = {}
 
