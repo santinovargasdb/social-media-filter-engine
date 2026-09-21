@@ -84,7 +84,11 @@ async function fetchStatus(jobId: string): Promise<UrnaJobStatus> {
   const timer = setTimeout(() => controller.abort(), POLL_TIMEOUT_MS);
   try {
     const res = await fetch(`${API_BASE}/api/boca-de-urna/status/${jobId}`, { signal: controller.signal });
-    if (!res.ok) throw new Error(await detailOrDefault(res, `Error consultando el estado (${res.status}).`));
+    if (!res.ok) {
+      const err = new Error(await detailOrDefault(res, `Error consultando el estado (${res.status}).`)) as Error & { status?: number };
+      err.status = res.status;  // para distinguir 404 permanente de un fallo transitorio
+      throw err;
+    }
     return res.json();
   } finally {
     clearTimeout(timer);
@@ -108,8 +112,13 @@ export async function runBocaDeUrnaAsync(
     try {
       st = await fetchStatus(jobId);
     } catch (e) {
+      // Un 4xx (p. ej. 404 = el job no existe porque Render se reinició) es PERMANENTE:
+      // cortar YA con el mensaje del backend, en vez de reintentar 10 minutos.
+      const status = (e as { status?: number })?.status;
+      if (status && status >= 400 && status < 500) throw e;
+      // Red / timeout / 5xx: transitorio (Render despertándose) → reintentar hasta el tope.
       if (Date.now() - started > MAX_WAIT_MS) throw e;
-      continue;  // reintento transitorio
+      continue;
     }
     if (st.state === "done" && st.result) return st.result;
     if (st.state === "error") throw new Error(st.error || "El análisis falló.");
