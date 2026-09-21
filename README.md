@@ -310,3 +310,4 @@ Colores institucionales aplicados en la interfaz:
 --smata-green-pale:  #E8F5E9;
 --smata-gold:        #FFC107;
 ```
+      
