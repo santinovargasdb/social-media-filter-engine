@@ -421,12 +421,19 @@ def _merge_pollster_rows(auto_rows: list[dict], manual_rows: list[dict]) -> list
     return list(merged.values())
 
 
+def _urna_backend_mode() -> str:
+    """Modo de obtención de datos de la Boca de Urna (env `URNA_FETCH_BACKEND`):
+    'serpapi' (default) | 'scraper' (scraping en vivo) | 'stored' (lee el último
+    snapshot que dejó el scraper local batch). El Monitor de Medios no usa esto."""
+    return os.environ.get("URNA_FETCH_BACKEND", "serpapi").strip().lower()
+
+
 def _use_scraper_for(network: str) -> bool:
-    """True si esta red debe obtener posts por SCRAPING en vez de SerpAPI. Controlado
-    por env vars: `URNA_FETCH_BACKEND=scraper` prende el scraper; `URNA_SCRAPER_NETWORKS`
-    (coma-separado) lo acota a esas redes (vacío = todas). Por defecto (serpapi) no
-    cambia nada. El Monitor de Medios (fetch_posts) NO pasa por acá."""
-    if os.environ.get("URNA_FETCH_BACKEND", "serpapi").strip().lower() != "scraper":
+    """True si esta red debe obtener posts por SCRAPING en vivo en vez de SerpAPI.
+    Controlado por env vars: `URNA_FETCH_BACKEND=scraper` prende el scraper;
+    `URNA_SCRAPER_NETWORKS` (coma-separado) lo acota a esas redes (vacío = todas). Por
+    defecto (serpapi) no cambia nada. El Monitor de Medios (fetch_posts) NO pasa por acá."""
+    if _urna_backend_mode() != "scraper":
         return False
     nets = os.environ.get("URNA_SCRAPER_NETWORKS", "").strip().lower()
     if not nets:
@@ -547,6 +554,20 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
     `progress_cb(phase: str, pct: float)` (opcional) reporta el avance para el modo
     async (jobs.py); si no se pasa, es no-op (los llamados síncronos no cambian)."""
     _p = progress_cb or (lambda phase, pct: None)
+
+    # Modo 'stored': no se busca en vivo — se devuelve el último snapshot que dejó el
+    # scraper local (batch). Así la app muestra el último análisis real aunque la PC de
+    # la oficina esté apagada. Import diferido para no acoplar el store al camino normal.
+    if _urna_backend_mode() == "stored":
+        _p("Leyendo el último análisis guardado…", 50)
+        import store
+        snap = store.read_latest_snapshot()
+        if snap is None:
+            raise UpstreamUnavailableError(
+                "Todavía no hay un análisis guardado. Esperá a la próxima corrida del "
+                "scraper local (corre 2-3 veces por día).")
+        return snap
+
     # 1) CSV primero: si el header es inválido, cortamos con ValueError (-> 400).
     pollster_rows, csv_warnings = parse_pollster_csv(pollster_csv)
     warnings = list(csv_warnings)

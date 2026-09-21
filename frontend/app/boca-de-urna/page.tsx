@@ -11,6 +11,11 @@ import ComparisonTable from "@/components/urna/ComparisonTable";
 const DEFAULT_DISCLAIMER =
   "Este indicador refleja el clima de conversación en redes sociales sobre publicaciones públicas indexadas. No es una muestra representativa del electorado ni una proyección de resultado electoral. Sirve como termómetro direccional, complementario a las encuestas de consultoras.";
 
+function fmtFecha(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString("es-AR");
+}
+
 export default function BocaDeUrnaPage() {
   const [data, setData] = useState<UrnaResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -55,6 +60,13 @@ export default function BocaDeUrnaPage() {
         )}
         {data && (
           <>
+            {data.meta.ultima_actualizacion && (
+              <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "10px",
+                display: "inline-flex", alignItems: "center", gap: "6px", padding: "4px 10px",
+                borderRadius: "var(--radius-sm)", background: "rgba(127,127,127,0.08)" }}>
+                🕒 Última actualización: {fmtFecha(data.meta.ultima_actualizacion)}
+              </div>
+            )}
             {data.meta.warnings.length > 0 && (
               <ul style={{ margin: "0 0 16px", padding: "10px 14px 10px 30px", fontSize: "12px",
                 borderRadius: "var(--radius-sm)", background: "rgba(127,127,127,0.08)", color: "var(--text-secondary)" }}>

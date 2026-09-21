@@ -28,6 +28,8 @@ export interface UrnaMeta {
   total_posts: number; posts_electorales: number; disclaimer: string; warnings: string[];
   analizados?: number;
   bloques?: UrnaBloque[];
+  // Modo 'stored': fecha (ISO) de la última corrida del scraper local batch.
+  ultima_actualizacion?: string;
 }
 export interface UrnaResponse {
   candidatos: UrnaCandidato[]; evidencia: UrnaEvidencia[];

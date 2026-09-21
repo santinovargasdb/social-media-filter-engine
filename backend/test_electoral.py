@@ -415,6 +415,29 @@ def test_run_network_block_usa_el_contexto_de_su_red(monkeypatch):
     assert up is False
 
 
+def test_run_boca_de_urna_modo_stored_devuelve_el_snapshot(monkeypatch):
+    """Con URNA_FETCH_BACKEND=stored, la urna NO busca en vivo: lee el último snapshot
+    guardado (del scraper local batch) y lo devuelve tal cual, con su fecha."""
+    import store
+    snap = {"candidatos": [{"nombre": "Javier Milei", "menciones": 42}], "evidencia": [],
+            "comparacion": [], "meta": {"total_posts": 120, "posts_electorales": 67,
+                                        "ultima_actualizacion": "2026-09-21T10:00:00Z", "warnings": []}}
+    monkeypatch.setenv("URNA_FETCH_BACKEND", "stored")
+    monkeypatch.setattr(store, "read_latest_snapshot", lambda: snap)
+    out = el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar", pollster_csv="")
+    assert out is snap
+    assert out["meta"]["ultima_actualizacion"] == "2026-09-21T10:00:00Z"
+
+
+def test_run_boca_de_urna_modo_stored_sin_snapshot_avisa(monkeypatch):
+    """En modo stored, si todavía no hay ningún snapshot, avisa (no rompe feo)."""
+    import store
+    monkeypatch.setenv("URNA_FETCH_BACKEND", "stored")
+    monkeypatch.setattr(store, "read_latest_snapshot", lambda: None)
+    with pytest.raises(el.UpstreamUnavailableError):
+        el.run_boca_de_urna(keywords=["x"], networks=["twitter"], date=None, country="ar", pollster_csv="")
+
+
 def test_run_network_block_usa_serpapi_por_defecto(monkeypatch):
     """Sin el feature flag, el bloque sigue usando SerpAPI (fetch_raw_posts) — cero
     cambio de comportamiento hasta prender el scraper."""
