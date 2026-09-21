@@ -301,7 +301,6 @@ interface Post {
 ```
 
 ## Branding SMATA
-
 Colores institucionales aplicados en la interfaz:
 
 ```css
