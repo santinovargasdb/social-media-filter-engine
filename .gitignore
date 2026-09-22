@@ -11,3 +11,10 @@ venv/
 dist/
 build/
 .DS_Store
+
+# Scraper local (PC de la oficina): estado y salidas — JAMÁS commitear
+scraper_local/accounts.json
+scraper_local/.sesiones/
+scraper_local/capturas/
+scraper_local/logs/
+scraper_local/.venv/

@@ -8,10 +8,11 @@ el último análisis real aunque la PC esté apagada.
 Diseño completo: `docs/superpowers/specs/2026-09-21-scraper-local-vision-design.md`.
 
 ## Estado
-- ✅ **Fase 1 (hecha):** almacén Supabase (`backend/store.py`) + modo `stored` en el
-  backend + "Última actualización" en el frontend. Con un snapshot sembrado, la app ya
-  muestra datos guardados.
-- ⏳ Fase 2: `vision.py` (captura → Gemini → posts). Fase 3: el scraper de X (Playwright).
+- ✅ **Fase 1:** almacén Supabase (`backend/store.py`) + modo `stored` + "Última actualización".
+- ✅ **Fase 2:** `vision.py` (captura → Gemini visión → posts). Smoke test: `testdata/README.md`.
+- ✅ **Fase 3:** el scraper de X (`accounts.py` + `browser.py` + `dedup.py` + `run.py`).
+  Falta el tuning en la PC de la oficina (selectores/tiempos con X real).
+- ⏳ Fase 4: Instagram y TikTok.
 
 ## 1) Crear la tabla en Supabase
 En el proyecto de Supabase → **SQL Editor** → correr:
@@ -73,3 +74,51 @@ esos datos y arriba **"🕒 Última actualización: …"**.
 
 > El scraper real (Fase 3) va a generar este mismo JSON automáticamente y llamar a
 > `store.write_snapshot(payload, generado_en_iso)` — la forma es idéntica.
+
+## 4) Setup del scraper en la PC de la oficina (Fase 3)
+
+Todo se corre DENTRO de `scraper_local\` (con el repo clonado):
+
+```powershell
+cd scraper_local
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\playwright install chromium
+```
+
+Variables de entorno (o un `.env` que cargues antes; run.py las lee del entorno):
+`GEMINI_API_KEY` (y opcional `GEMINI_API_KEY_SECONDARY`), `SUPABASE_URL`,
+`SUPABASE_KEY` (**service_role** — el scraper ESCRIBE), y opcional
+`VISION_MIN_INTERVAL` (default 10s entre llamadas a Gemini).
+
+**Cuentas** (descartables, login manual una sola vez por cuenta):
+
+```powershell
+.venv\Scripts\python accounts.py login cuenta1   # se abre el navegador: logueá a mano y Enter
+.venv\Scripts\python accounts.py estado          # ver el pool
+```
+
+**Probar la maquinaria sin tocar X** (contra el feed falso):
+
+```powershell
+# en otra consola: python -m http.server 8123 --bind 127.0.0.1  (desde testdata\)
+.venv\Scripts\python browser.py --url http://127.0.0.1:8123/feed_falso.html --scrolls 3
+```
+
+**Corrida completa** (primero en dry-run, que no sube nada):
+
+```powershell
+.venv\Scripts\python run.py --dry-run
+.venv\Scripts\python run.py            # sube el snapshot a Supabase
+```
+
+**Task Scheduler** (2-3×/día): crear una tarea básica que ejecute
+`powershell -ExecutionPolicy Bypass -File "<ruta>\scraper_local\run.ps1"`
+en los horarios elegidos (ej. 09:00, 14:00, 19:00). Config editable en
+`config.json` (scrolls, esperas, candidatos, mínimo de posts para subir).
+
+**Qué tunear allá si algo no anda** (es lo esperable, X cambia):
+- `browser.py`: `SELECTOR_FEED` (hoy `article`), `MARCAS_SESION_MUERTA`, `TIMEOUT_FEED_MS`.
+- `config.json`: esperas más largas si X muestra challenges; `headless: false` para VER
+  qué pasa; menos candidatos para corridas más cortas.
+- Cuentas quemadas: `accounts.py estado` las muestra; reponer con `login <alias-nuevo>`.

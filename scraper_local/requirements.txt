@@ -1,0 +1,3 @@
+# Dependencias del scraper local (la PC de la oficina). El backend NO las usa.
+playwright
+requests
