@@ -69,8 +69,11 @@ def _login(alias: str) -> int:
         pool.setdefault("cuentas", []).append(
             {"alias": alias, "estado": "activa", "ultima_vez": "", "notas": ""})
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
+        # Ventana maximizada y SIN viewport fijo: sin esto Playwright fuerza
+        # 1280x720 adentro de la ventana real y el modal de login de X queda
+        # recortado — el operador no puede completar los campos.
+        browser = p.chromium.launch(headless=False, args=["--start-maximized"])
+        context = browser.new_context(no_viewport=True)
         page = context.new_page()
         page.goto(X_LOGIN_URL)
         print(f"Logueá la cuenta '{alias}' en la ventana del navegador.")
