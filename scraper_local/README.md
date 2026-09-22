@@ -88,8 +88,14 @@ python -m venv .venv
 
 Variables de entorno (o un `.env` que cargues antes; run.py las lee del entorno):
 `GEMINI_API_KEY` (y opcional `GEMINI_API_KEY_SECONDARY`), `SUPABASE_URL`,
-`SUPABASE_KEY` (**service_role** — el scraper ESCRIBE), y opcional
-`VISION_MIN_INTERVAL` (default 10s entre llamadas a Gemini).
+`SUPABASE_KEY` y opcional `VISION_MIN_INTERVAL` (default 10s entre llamadas a Gemini).
+
+> [!important] Cuál key de Supabase va acá
+> La **SECRET key** (`sb_secret_...`): Project Settings → API Keys → pestaña
+> "Secret keys" → Create/Reveal. En la UI nueva de Supabase "secret" es el nombre
+> actual de la vieja **service_role** — el scraper ESCRIBE y necesita ese nivel.
+> La "publishable" (`sb_publishable_...`, ex anon) NO sirve para escribir; esa es
+> la de LECTURA que usa el backend en Render.
 
 **Cuentas** (descartables, login manual una sola vez por cuenta):
 
