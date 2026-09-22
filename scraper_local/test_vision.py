@@ -93,3 +93,64 @@ def test_sanitize_descarta_items_no_dict():
     assert vision._sanitize_posts(["texto suelto", 42, {"texto": "ok", "candidatos": []}], "x") == [
         {"texto": "ok", "autor": "", "fecha": "", "red": "x",
          "es_electoral": False, "candidatos": [], "cita": ""}]
+
+
+def test_pace_espera_lo_que_falta(monkeypatch):
+    """Si pasaron 4s de un intervalo de 10, duerme los 6 restantes."""
+    monkeypatch.setenv("VISION_MIN_INTERVAL", "10")
+    monkeypatch.setattr(vision, "_last_call", 100.0)
+    tiempos = iter([104.0, 110.0])
+    dormido = []
+    monkeypatch.setattr(vision.time, "monotonic", lambda: next(tiempos))
+    monkeypatch.setattr(vision.time, "sleep", lambda s: dormido.append(s))
+    vision._pace()
+    assert dormido == [6.0]
+    assert vision._last_call == 110.0
+
+
+def test_pace_intervalo_cumplido_no_espera(monkeypatch):
+    monkeypatch.setenv("VISION_MIN_INTERVAL", "10")
+    monkeypatch.setattr(vision, "_last_call", 100.0)
+    monkeypatch.setattr(vision.time, "monotonic", lambda: 250.0)
+    monkeypatch.setattr(vision.time, "sleep",
+                        lambda s: (_ for _ in ()).throw(AssertionError("no debía dormir")))
+    vision._pace()
+
+
+def test_pace_cero_desactiva_y_primera_llamada_no_espera(monkeypatch):
+    monkeypatch.setattr(vision.time, "sleep",
+                        lambda s: (_ for _ in ()).throw(AssertionError("no debía dormir")))
+    monkeypatch.setattr(vision.time, "monotonic", lambda: 300.0)
+    # VISION_MIN_INTERVAL=0 -> nunca espera, aunque la última llamada sea reciente.
+    monkeypatch.setenv("VISION_MIN_INTERVAL", "0")
+    monkeypatch.setattr(vision, "_last_call", 299.0)
+    vision._pace()
+    # Primera llamada (_last_call == 0) -> no espera aunque haya intervalo.
+    monkeypatch.setenv("VISION_MIN_INTERVAL", "10")
+    monkeypatch.setattr(vision, "_last_call", 0.0)
+    vision._pace()
+
+
+def test_cli_imprime_json(monkeypatch, capsys, tmp_path):
+    cap = tmp_path / "cap.png"
+    cap.write_bytes(b"x")
+    monkeypatch.setattr(vision, "read_capture",
+                        lambda image, red, candidatos=None, mime=None: [{"texto": "hola", "red": red}])
+    rc = vision.main([str(cap), "--red", "twitter"])
+    assert rc == 0
+    salida = json.loads(capsys.readouterr().out)
+    assert salida == [{"texto": "hola", "red": "twitter"}]
+
+
+def test_cli_pasa_candidatos_y_falla_con_upstream(monkeypatch, capsys, tmp_path):
+    cap = tmp_path / "cap.png"
+    cap.write_bytes(b"x")
+    visto = {}
+    def fake_read(image, red, candidatos=None, mime=None):
+        visto["candidatos"] = candidatos
+        return None
+    monkeypatch.setattr(vision, "read_capture", fake_read)
+    rc = vision.main([str(cap), "--candidatos", "Juan Pérez, Ana López"])
+    assert rc == 1
+    assert visto["candidatos"] == ["Juan Pérez", "Ana López"]
+    assert "no respondió" in capsys.readouterr().err
