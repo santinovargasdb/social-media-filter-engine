@@ -143,7 +143,7 @@ def test_parse_post_url_usa_hint_cuando_no_resuelve():
 # ── _process_with_gemini: batch de 1 sola llamada + mapeo ─────────────────────
 def _fake_scored(items):
     """Devuelve un _call_gemini_model fake que responde una lista fija."""
-    def _fake(model, api_key, prompt):
+    def _fake(model, api_key, prompt, image=None):
         return (items, None)
     return _fake
 
@@ -152,7 +152,7 @@ def test_process_una_sola_llamada_para_todas_las_redes(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test")
     llamadas = {"n": 0}
 
-    def fake(model, api_key, prompt):
+    def fake(model, api_key, prompt, image=None):
         llamadas["n"] += 1
         # Gemini responde por ID (espejo de los Post_N enviados).
         return ([
@@ -269,7 +269,7 @@ def test_process_rota_a_secundaria_en_429(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY_SECONDARY", "secondary")
     keys_usadas = []
 
-    def fake(model, api_key, prompt):
+    def fake(model, api_key, prompt, image=None):
         keys_usadas.append(api_key)
         if api_key == "primary":
             return (None, 429)  # cuota agotada en todos los modelos
@@ -285,7 +285,7 @@ def test_process_rota_tambien_en_503(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "primary")
     monkeypatch.setenv("GEMINI_API_KEY_SECONDARY", "secondary")
 
-    def fake(model, api_key, prompt):
+    def fake(model, api_key, prompt, image=None):
         if api_key == "primary":
             return (None, 503)
         return ([{"id": "Post_0", "score": 80, "razon": "x"}], None)
@@ -299,7 +299,7 @@ def test_process_sin_secundaria_no_rota(monkeypatch):
     """Sin GEMINI_API_KEY_SECONDARY, una cuota agotada devuelve None (sin romper)."""
     monkeypatch.setenv("GEMINI_API_KEY", "primary")
     monkeypatch.delenv("GEMINI_API_KEY_SECONDARY", raising=False)
-    monkeypatch.setattr(gc, "call_gemini_json", lambda m, k, p: (None, 429))
+    monkeypatch.setattr(gc, "call_gemini_json", lambda m, k, p, image=None: (None, 429))
     assert nz._process_with_gemini(_SERP_OK, "smata", smata_mode=False, keywords=[]) is None
 
 
@@ -309,7 +309,7 @@ def test_process_no_rota_si_error_no_es_cuota(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY_SECONDARY", "secondary")
     keys_usadas = []
 
-    def fake(model, api_key, prompt):
+    def fake(model, api_key, prompt, image=None):
         keys_usadas.append(api_key)
         return (None, None)  # error de red/parseo, no cuota
 
@@ -465,7 +465,7 @@ def test_prompt_bifurca_estricto_vs_amplio(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test")
     capturado = {}
 
-    def fake(model, api_key, prompt):
+    def fake(model, api_key, prompt, image=None):
         capturado["p"] = prompt
         return ([], None)
 
@@ -483,7 +483,7 @@ def test_prompt_blindado_ids_y_aislamiento(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test")
     capturado = {}
 
-    def fake(model, api_key, prompt):
+    def fake(model, api_key, prompt, image=None):
         capturado["p"] = prompt
         return ([], None)
 

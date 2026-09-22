@@ -32,6 +32,19 @@ CONF_MIN = 0.5
 POSTURAS_VALIDAS = ("a_favor", "en_contra", "neutro")
 CSV_COLUMNS = ("consultora", "fecha", "candidato", "porcentaje")
 
+# Reglas de clasificación de candidatos COMPARTIDAS entre el prompt de texto
+# (_build_electoral_prompt) y el prompt de visión (scraper_local/vision.py), para
+# que ambos clasifiquen con la MISMA semántica direccional. Texto verbatim del
+# prompt original — cambiarlo acá cambia los dos.
+REGLAS_CANDIDATOS = """   - "nombre": el nombre COMPLETO y CANÓNICO del candidato (ej. si dice "Milei" o "el León", devolvé "Javier Milei"). Unificá alias y apodos al nombre canónico.
+   - "postura": la SEÑAL DIRECCIONAL del posteo hacia ese candidato (no solo la opinión explícita del autor: también la ventaja/desventaja que el posteo le atribuye). Exactamente uno de:
+       * "a_favor": lo muestra FAVORABLE o EN VENTAJA — lo elogia/apoya/respalda, O reporta que lidera, puntea o tiene una intención de voto ALTA en una encuesta, O que gana/ganaría.
+       * "en_contra": lo muestra DESFAVORABLE o EN DESVENTAJA — lo critica/ataca, O reporta que tiene una intención de voto MARGINAL o muy baja (claramente relegado) en una encuesta, O que pierde/perdería.
+       * "neutro": mención meramente informativa, sin señal direccional clara, o con una intención de voto intermedia que no lo distingue.
+   - "confianza": número entre 0 y 1 con tu certeza sobre esa señal.
+   Si no hay candidatos, devolvé [].
+   REGLA DE ENCUESTAS/SONDEOS: si la publicación es una encuesta o sondeo que reporta porcentajes de intención de voto, USÁ los porcentajes como señal (no lo trates como neutro por ser el autor imparcial): el/los candidato(s) puntero(s) o competitivo(s), con intención de voto claramente alta → "a_favor"; los de intención de voto marginal o muy baja (claramente fuera de la pelea) → "en_contra"; los intermedios → "neutro". NO devuelvas como candidatos las opciones que no son personas (voto en blanco, impugnado, indeciso, "no sabe / no contesta", "ninguno")."""
+
 # ── Lista fija de candidatos (EDITABLE) ───────────────────────────────────────
 # EDITÁ ESTA LISTA con los candidatos de la elección vigente. La Boca de Urna hace
 # UNA búsqueda dedicada por cada candidato (además de la búsqueda general) para
@@ -204,14 +217,7 @@ REGLA DE AISLAMIENTO (OBLIGATORIA): Evaluá cada publicación de forma totalment
 Por cada publicación determiná:
 1. "es_electoral": true solo si la publicación habla de candidatos, partidos o la contienda electoral presidencial argentina; false si es ruido, spam u otro tema.
 2. "candidatos": lista de los candidatos presidenciales mencionados. Por cada uno:
-   - "nombre": el nombre COMPLETO y CANÓNICO del candidato (ej. si dice "Milei" o "el León", devolvé "Javier Milei"). Unificá alias y apodos al nombre canónico.
-   - "postura": la SEÑAL DIRECCIONAL del posteo hacia ese candidato (no solo la opinión explícita del autor: también la ventaja/desventaja que el posteo le atribuye). Exactamente uno de:
-       * "a_favor": lo muestra FAVORABLE o EN VENTAJA — lo elogia/apoya/respalda, O reporta que lidera, puntea o tiene una intención de voto ALTA en una encuesta, O que gana/ganaría.
-       * "en_contra": lo muestra DESFAVORABLE o EN DESVENTAJA — lo critica/ataca, O reporta que tiene una intención de voto MARGINAL o muy baja (claramente relegado) en una encuesta, O que pierde/perdería.
-       * "neutro": mención meramente informativa, sin señal direccional clara, o con una intención de voto intermedia que no lo distingue.
-   - "confianza": número entre 0 y 1 con tu certeza sobre esa señal.
-   Si no hay candidatos, devolvé [].
-   REGLA DE ENCUESTAS/SONDEOS: si la publicación es una encuesta o sondeo que reporta porcentajes de intención de voto, USÁ los porcentajes como señal (no lo trates como neutro por ser el autor imparcial): el/los candidato(s) puntero(s) o competitivo(s), con intención de voto claramente alta → "a_favor"; los de intención de voto marginal o muy baja (claramente fuera de la pelea) → "en_contra"; los intermedios → "neutro". NO devuelvas como candidatos las opciones que no son personas (voto en blanco, impugnado, indeciso, "no sabe / no contesta", "ninguno").
+{REGLAS_CANDIDATOS}
 3. "cita": el fragmento textual breve del posteo que justifica la señal (o "" si no aplica).
 
 Devolvé ÚNICAMENTE un JSON válido (sin texto adicional ni bloques de código) que sea un ESPEJO EXACTO de los IDs recibidos: un objeto por publicación, con su mismo "id". No agregues ni omitas ninguno. Formato exacto:
