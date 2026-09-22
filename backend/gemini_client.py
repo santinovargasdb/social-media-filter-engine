@@ -5,6 +5,7 @@ modelos con fallback por status y rotación a la API Key secundaria por cuota.
 Extraído de normalizer.py para que la Capa 3 de scoring (normalizer) y la Capa 3
 electoral (electoral.py) usen el mismo transporte sin duplicarlo. No conoce el
 dominio: recibe un prompt, devuelve la lista JSON que Gemini responde.
+Acepta una imagen opcional (visión) sin cambiar el contrato de texto.
 """
 import os
 import json
@@ -21,12 +22,18 @@ GEMINI_MODELS = (
 GEMINI_RETRY_STATUSES = (429, 503, 404)
 
 
-def generate_raw(model: str, api_key: str, prompt: str, timeout: int = 45) -> tuple[str | None, int | None]:
+def generate_raw(model: str, api_key: str, prompt: str, timeout: int = 45,
+                 image: tuple[str, str] | None = None) -> tuple[str | None, int | None]:
     """Llamada cruda a un modelo Gemini. Devuelve (texto_sin_fences, http_status_si_error).
-    - (texto, None): éxito       - (None, status): error HTTP       - (None, None): error de red."""
+    - (texto, None): éxito       - (None, status): error HTTP       - (None, None): error de red.
+    `image`: (data_base64, mime_type) opcional — agrega la imagen al prompt (visión)."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    parts: list[dict] = [{"text": prompt}]
+    if image is not None:
+        data_b64, mime = image
+        parts.append({"inline_data": {"mime_type": mime, "data": data_b64}})
+    payload = {"contents": [{"parts": parts}]}
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=timeout)
         response.raise_for_status()
@@ -50,10 +57,10 @@ def generate_raw(model: str, api_key: str, prompt: str, timeout: int = 45) -> tu
         return None, None
 
 
-def call_gemini_json(model: str, api_key: str, prompt: str) -> tuple[list | None, int | None]:
+def call_gemini_json(model: str, api_key: str, prompt: str, image: tuple[str, str] | None = None) -> tuple[list | None, int | None]:
     """Llama a un modelo y parsea la respuesta como LISTA JSON (mirror por id).
     - (lista, None): éxito     - (None, status): error HTTP     - (None, None): red/parseo."""
-    raw, status = generate_raw(model, api_key, prompt, timeout=45)
+    raw, status = generate_raw(model, api_key, prompt, timeout=45, image=image)
     if raw is None:
         return None, status
     try:
@@ -67,13 +74,13 @@ def call_gemini_json(model: str, api_key: str, prompt: str) -> tuple[list | None
     return parsed, None
 
 
-def run_cascade(prompt: str, api_key: str) -> tuple[list | None, int | None]:
+def run_cascade(prompt: str, api_key: str, image: tuple[str, str] | None = None) -> tuple[list | None, int | None]:
     """Recorre GEMINI_MODELS con UNA api_key; el primero que responde OK gana; el
     siguiente solo se prueba ante 429/503/404. Devuelve (parsed, last_status)."""
     parsed: list | None = None
     status: int | None = None
     for idx, model in enumerate(GEMINI_MODELS):
-        parsed, status = call_gemini_json(model, api_key, prompt)
+        parsed, status = call_gemini_json(model, api_key, prompt, image=image)
         if parsed is not None:
             if idx > 0:
                 print(f"DEBUG Gemini: fallback EXITOSO con {model}")
@@ -85,7 +92,7 @@ def run_cascade(prompt: str, api_key: str) -> tuple[list | None, int | None]:
     return None, status
 
 
-def run_with_rotation(prompt: str) -> tuple[list | None, int | None]:
+def run_with_rotation(prompt: str, image: tuple[str, str] | None = None) -> tuple[list | None, int | None]:
     """Cascada con la API Key PRINCIPAL; si la cuota se agotó (429/503) y no quedó
     resultado, rota a la SECUNDARIA y reintenta el mismo prompt. Devuelve
     (parsed, last_status). Sin GEMINI_API_KEY devuelve (None, None)."""
@@ -93,12 +100,12 @@ def run_with_rotation(prompt: str) -> tuple[list | None, int | None]:
     if not api_key:
         print("ERROR: GEMINI_API_KEY no configurada.")
         return None, None
-    parsed, status = run_cascade(prompt, api_key)
+    parsed, status = run_cascade(prompt, api_key, image=image)
     if parsed is None and status in (429, 503):
         secondary_key = os.getenv("GEMINI_API_KEY_SECONDARY", "")
         if secondary_key:
             print("Cuota principal agotada. Rotando a la API de SMATA...")
-            parsed, status = run_cascade(prompt, secondary_key)
+            parsed, status = run_cascade(prompt, secondary_key, image=image)
             if parsed is not None:
                 print("DEBUG Gemini: rotación a API secundaria EXITOSA.")
         else:
