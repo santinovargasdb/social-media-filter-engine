@@ -13,11 +13,15 @@ import json
 import requests
 
 # Cascada de modelos: si el primero da 429/503/404 se prueba el siguiente.
+# 2026-09-22: Google dio de baja gemini-2.0-flash(-lite) (404 "no longer
+# available"); se reemplazaron por sus sucesores 3.6/3.5, verificados con la
+# key en vivo. Se mantiene 2.5-flash como primario para no cambiar el
+# comportamiento normal — los 3.x son el paracaídas cuando 2.5 se satura (503).
 GEMINI_MODELS = (
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
 )
 GEMINI_RETRY_STATUSES = (429, 503, 404)
 
