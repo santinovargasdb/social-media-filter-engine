@@ -95,7 +95,7 @@ def _preparar_correr(monkeypatch, tmp_path, posts_por_captura, escritos):
     monkeypatch.setattr(run.accounts, "guardar_pool", lambda p, ruta=None: None)
     monkeypatch.setattr(run, "capturar_candidato",
                         lambda cfg, pool, cand, carpeta, warnings: [tmp_path / f"{cand}.png"])
-    monkeypatch.setattr(run.vision, "read_capture", lambda ruta, red: posts_por_captura)
+    monkeypatch.setattr(run.vision, "read_capture", lambda ruta, red, candidatos=None: posts_por_captura)
     monkeypatch.setattr(run.store, "write_snapshot",
                         lambda payload, generado_en: escritos.append(payload) or True)
     monkeypatch.setattr(run.browser, "esperar_aleatorio", lambda rango: None)
@@ -145,3 +145,28 @@ def test_correr_lectura_fallida_cuenta_error(monkeypatch, tmp_path):
     rc = run.correr(_cfg(candidatos=["Javier Milei"]), dry_run=False)
     assert rc == 1  # sin posts electorales -> no pisa
     assert escritos == []
+
+
+def test_capturar_candidato_error_inesperado_no_quema_ni_aborta(tmp_path, monkeypatch):
+    """Un crash de Playwright (no SesionInvalidaError) devuelve [] con warning,
+    sin marcar la cuenta como quemada."""
+    pool = {"cuentas": [{"alias": "a", "estado": "activa", "ultima_vez": "", "notas": ""}]}
+    def explota(sesion, termino, **kw):
+        raise RuntimeError("chromium se murió")
+    monkeypatch.setattr(run.browser, "capturar_busqueda", explota)
+    warnings = []
+    rutas = run.capturar_candidato(_cfg(), pool, "Javier Milei", tmp_path, warnings)
+    assert rutas == []
+    assert pool["cuentas"][0]["estado"] == "activa"  # NO quemada
+    assert any("error del navegador" in w for w in warnings)
+
+
+def test_correr_pasa_candidatos_a_vision(monkeypatch, tmp_path):
+    """El prompt de visión recibe la lista de candidatos del config."""
+    escritos = []
+    _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
+    vistos = []
+    monkeypatch.setattr(run.vision, "read_capture",
+                        lambda ruta, red, candidatos=None: vistos.append(candidatos) or [POST_MILEI])
+    run.correr(_cfg(candidatos=["Solo Uno"]), dry_run=False)
+    assert vistos and vistos[0] == ["Solo Uno"]

@@ -136,6 +136,12 @@ def capturar_candidato(cfg: dict, pool: dict, candidato: str, carpeta: Path,
             log.warning("Cuenta '%s' quemada/challenge: %s", cuenta["alias"], e)
             accounts.marcar_quemada(pool, cuenta["alias"])
             warnings.append(f"Cuenta '{cuenta['alias']}' marcada como quemada.")
+        except Exception as e:
+            # Error inesperado del browser (Playwright caído, sesión ilegible, etc.):
+            # no es evidencia de cuenta quemada — se registra y la corrida sigue.
+            log.error("Error inesperado capturando '%s': %s", candidato, e)
+            warnings.append(f"'{candidato}' quedó sin capturar (error del navegador: {e}).")
+            return []
     warnings.append(f"'{candidato}' quedó sin capturar (dos cuentas fallaron).")
     return []
 
@@ -163,7 +169,7 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
         log.info("Candidato %d/%d: %s", i + 1, len(candidatos), candidato)
         rutas = capturar_candidato(cfg, pool, candidato, carpeta, warnings)
         for ruta in rutas:
-            leidos = vision.read_capture(ruta, red)
+            leidos = vision.read_capture(ruta, red, candidatos)
             if leidos is None:
                 errores += 1
                 warnings.append(f"Lectura fallida (Gemini) de {ruta.name}.")
