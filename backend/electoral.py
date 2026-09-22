@@ -43,7 +43,7 @@ REGLAS_CANDIDATOS = """   - "nombre": el nombre COMPLETO y CANÓNICO del candida
        * "neutro": mención meramente informativa, sin señal direccional clara, o con una intención de voto intermedia que no lo distingue.
    - "confianza": número entre 0 y 1 con tu certeza sobre esa señal.
    Si no hay candidatos, devolvé [].
-   REGLA DE ENCUESTAS/SONDEOS: si la publicación es una encuesta o sondeo que reporta porcentajes de intención de voto, USÁ los porcentajes como señal (no lo trates como neutro por ser el autor imparcial): el/los candidato(s) puntero(s) o competitivo(s), con intención de voto claramente alta → "a_favor"; los de intención de voto marginal o muy baja (claramente fuera de la pelea) → "en_contra"; los intermedios → "neutro". NO devueltas como candidatos las opciones que no son personas (voto en blanco, impugnado, indeciso, "no sabe / no contesta", "ninguno")."""
+   REGLA DE ENCUESTAS/SONDEOS: si la publicación es una encuesta o sondeo que reporta porcentajes de intención de voto, USÁ los porcentajes como señal (no lo trates como neutro por ser el autor imparcial): el/los candidato(s) puntero(s) o competitivo(s), con intención de voto claramente alta → "a_favor"; los de intención de voto marginal o muy baja (claramente fuera de la pelea) → "en_contra"; los intermedios → "neutro". NO devuelvas como candidatos las opciones que no son personas (voto en blanco, impugnado, indeciso, "no sabe / no contesta", "ninguno")."""
 
 # ── Lista fija de candidatos (EDITABLE) ───────────────────────────────────────
 # EDITÁ ESTA LISTA con los candidatos de la elección vigente. La Boca de Urna hace
