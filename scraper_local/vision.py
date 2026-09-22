@@ -56,8 +56,9 @@ Vas a recibir UNA CAPTURA DE PANTALLA de la red social "{red}". Tu tarea es EXTR
 
 REGLAS DE LECTURA DE PANTALLA (OBLIGATORIAS):
 - Extraé SOLO las publicaciones COMPLETAMENTE visibles. Si una publicación está cortada por un borde de la captura, ignorala.
-- Ignorá la interfaz de la red: menús, buscadores, tendencias, sugerencias ("a quién seguir"), contadores de interacción y publicidad (todo lo marcado "Promocionado" o "Ad").
-- NO inventes NADA. "autor": el @usuario visible (si no se ve un @, el nombre mostrado). "fecha": el texto de fecha TAL CUAL aparece en pantalla (ej. "2 h", "12 sep."). Si un dato no se ve, dejá "".
+- Ignorá la interfaz de la red: menús, buscadores, tendencias, sugerencias ("a quién seguir"), contadores de interacción y publicidad (todo lo marcado "Promocionado" o "Ad"). Las publicidades NO van en la lista de salida — no las incluyas ni siquiera con "es_electoral": false.
+- Las publicaciones comunes que NO son electorales (deporte, espectáculos, etc.) SÍ van en la lista, con "es_electoral": false. Lo ÚNICO que se excluye de la lista es la publicidad, la interfaz y las publicaciones cortadas.
+- NO inventes NADA y NO "corrijas" lo que leas: transcribí textos y nombres EXACTO como aparecen en pantalla, aunque parezcan tener errores. "autor": el @usuario (el handle que empieza con @) si está visible; SOLO si no se ve ningún @, usá el nombre mostrado. "fecha": el texto de fecha TAL CUAL aparece en pantalla (ej. "2 h", "12 sep."). Si un dato no se ve, dejá "".
 - "texto": el texto completo de la publicación tal como se lee en la captura.
 - REGLA DE AISLAMIENTO: evaluá cada publicación de forma totalmente AISLADA e INDEPENDIENTE de las demás.
 
@@ -66,6 +67,8 @@ Por cada publicación determiná:
 2. "candidatos": lista de los candidatos presidenciales mencionados. Por cada uno:
 {REGLAS_CANDIDATOS}
 3. "cita": el fragmento textual breve de la publicación que justifica la señal (o "" si no aplica).
+
+ACLARACIÓN para la REGLA DE ENCUESTAS/SONDEOS: "competitivo" incluye a cualquier candidato que está a pocos puntos del puntero (pelea la punta) → también va "a_favor". "Intermedio" (→ "neutro") es el que está claramente lejos de la punta pero no marginal.
 
 Candidatos de referencia (lista NO exhaustiva; puede aparecer alguno que no esté acá): {lista}.
 
