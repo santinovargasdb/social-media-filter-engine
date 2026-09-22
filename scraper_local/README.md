@@ -104,6 +104,13 @@ Variables de entorno (o un `.env` que cargues antes; run.py las lee del entorno)
 .venv\Scripts\python accounts.py estado          # ver el pool
 ```
 
+> [!warning] En esa ventana usá el login NATIVO de X (usuario + contraseña)
+> NO uses "Continuar con Google": Google bloquea su login dentro de navegadores
+> automatizados (pestaña en blanco / "este navegador no es seguro"). Si una cuenta
+> fue creada con Google y no tiene contraseña, generásela con "¿Olvidaste tu
+> contraseña?" desde un navegador normal. Las cuentas nuevas crealas siempre con
+> mail + contraseña (registro nativo de X).
+
 **Probar la maquinaria sin tocar X** (contra el feed falso):
 
 ```powershell
