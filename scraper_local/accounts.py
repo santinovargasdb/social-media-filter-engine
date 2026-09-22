@@ -69,14 +69,20 @@ def _login(alias: str) -> int:
         pool.setdefault("cuentas", []).append(
             {"alias": alias, "estado": "activa", "ultima_vez": "", "notas": ""})
     with sync_playwright() as p:
-        # Ventana maximizada y SIN viewport fijo: sin esto Playwright fuerza
-        # 1280x720 adentro de la ventana real y el modal de login de X queda
-        # recortado — el operador no puede completar los campos.
-        browser = p.chromium.launch(headless=False, args=["--start-maximized"])
+        # Ventana maximizada, SIN viewport fijo y con escala 1:1. Sin esto,
+        # Playwright fuerza 1280x720 adentro de la ventana real, y en pantallas
+        # chicas con escalado de Windows (125%) el modal de login de X queda
+        # recortado — el operador no puede completar los campos (medido: 488px
+        # útiles de alto con escala 1.25 vs 633px con escala 1).
+        browser = p.chromium.launch(
+            headless=False,
+            args=["--start-maximized", "--force-device-scale-factor=1"])
         context = browser.new_context(no_viewport=True)
         page = context.new_page()
         page.goto(X_LOGIN_URL)
         print(f"Logueá la cuenta '{alias}' en la ventana del navegador.")
+        print("(Usá el login con mail+contraseña de X, NO el botón de Google. "
+              "Si algo queda recortado: scrolleá dentro del modal o achicá con Ctrl+menos.)")
         input("Cuando estés adentro (se ve el timeline), apretá Enter acá... ")
         context.storage_state(path=str(ruta_sesion(alias)))
         browser.close()
