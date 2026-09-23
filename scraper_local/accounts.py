@@ -5,7 +5,8 @@ Pool en accounts.json (GIT-IGNORED) con estado por cuenta; las cookies
 (storage_state de Playwright) viven en .sesiones/<alias>.json (GIT-IGNORED).
 El login es MANUAL una sola vez por cuenta — sin passwords guardados:
 
-    python accounts.py login <alias>   # navegador visible, logueás a mano
+    python accounts.py login <alias>   # navegador visible, logueás a mano;
+                                       # detecta solo cuando estás adentro
     python accounts.py estado          # lista el pool
 
 Playwright se importa DIFERIDO (solo lo usa el CLI de login): la suite corre
@@ -22,6 +23,10 @@ RUTA_POOL = BASE_DIR / "accounts.json"
 DIR_SESIONES = BASE_DIR / ".sesiones"
 
 X_LOGIN_URL = "https://x.com/login"
+# Al completar el login X redirige a /home — eso es lo que se espera para guardar
+# la sesión (sin pedir Enter: este CLI también corre sin stdin interactivo).
+X_HOME_GLOB = "**/home*"
+LOGIN_TIMEOUT_MS = 300_000  # 5 min para loguear a mano
 
 
 def cargar_pool(ruta=None) -> dict:
@@ -61,7 +66,7 @@ def ruta_sesion(alias: str) -> Path:
 
 
 def _login(alias: str) -> int:
-    """Login manual: navegador visible; el operador loguea y aprieta Enter acá."""
+    """Login manual: navegador visible; se guarda solo al detectar la redirección a /home."""
     from playwright.sync_api import sync_playwright  # diferido: solo el CLI lo necesita
     DIR_SESIONES.mkdir(exist_ok=True)
     pool = cargar_pool()
@@ -74,16 +79,29 @@ def _login(alias: str) -> int:
         # chicas con escalado de Windows (125%) el modal de login de X queda
         # recortado — el operador no puede completar los campos (medido: 488px
         # útiles de alto con escala 1.25 vs 633px con escala 1).
+        # AutomationControlled apagado: con navigator.webdriver=true X deja
+        # escribir el mail pero el botón "Siguiente" no responde (medido acá).
         browser = p.chromium.launch(
             headless=False,
-            args=["--start-maximized", "--force-device-scale-factor=1"])
+            args=["--start-maximized", "--force-device-scale-factor=1",
+                  "--disable-blink-features=AutomationControlled"])
         context = browser.new_context(no_viewport=True)
         page = context.new_page()
         page.goto(X_LOGIN_URL)
         print(f"Logueá la cuenta '{alias}' en la ventana del navegador.")
         print("(Usá el login con mail+contraseña de X, NO el botón de Google. "
               "Si algo queda recortado: scrolleá dentro del modal o achicá con Ctrl+menos.)")
-        input("Cuando estés adentro (se ve el timeline), apretá Enter acá... ")
+        print("Cuando estés adentro se guarda solo (detecta la redirección al timeline).")
+        try:
+            page.wait_for_url(X_HOME_GLOB, timeout=LOGIN_TIMEOUT_MS)
+        except Exception:
+            print(f"ERROR: no se detectó el login en {LOGIN_TIMEOUT_MS // 60000} min "
+                  "(o se cerró la ventana). La cuenta NO se agregó; reintentá.")
+            try:
+                browser.close()
+            except Exception:
+                pass
+            return 1
         context.storage_state(path=str(ruta_sesion(alias)))
         browser.close()
     for c in pool["cuentas"]:

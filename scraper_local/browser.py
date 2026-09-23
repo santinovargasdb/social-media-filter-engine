@@ -68,7 +68,10 @@ def capturar_busqueda(sesion: Path, termino: str, scrolls: int = 3,
     Lanza SesionInvalidaError si la sesión no sirve o el feed no aparece."""
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout  # diferido
     with sync_playwright() as p:
-        navegador = p.chromium.launch(headless=headless)
+        # Mismo flag que el login (accounts.py): con navigator.webdriver=true X
+        # interpone challenges, que acá se leerían como cuenta quemada.
+        navegador = p.chromium.launch(
+            headless=headless, args=["--disable-blink-features=AutomationControlled"])
         context = navegador.new_context(
             storage_state=str(sesion),
             viewport={"width": viewport[0], "height": viewport[1]})

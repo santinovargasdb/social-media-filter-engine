@@ -100,7 +100,7 @@ Variables de entorno (o un `.env` que cargues antes; run.py las lee del entorno)
 **Cuentas** (descartables, login manual una sola vez por cuenta):
 
 ```powershell
-.venv\Scripts\python accounts.py login cuenta1   # se abre el navegador: logueá a mano y Enter
+.venv\Scripts\python accounts.py login cuenta1   # se abre el navegador: logueá a mano; guarda solo al llegar al timeline
 .venv\Scripts\python accounts.py estado          # ver el pool
 ```
 
