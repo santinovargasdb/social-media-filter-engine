@@ -86,9 +86,10 @@ python -m venv .venv
 .venv\Scripts\playwright install chromium
 ```
 
-Variables de entorno (o un `.env` que cargues antes; run.py las lee del entorno):
-`GEMINI_API_KEY` (y opcional `GEMINI_API_KEY_SECONDARY`), `SUPABASE_URL`,
-`SUPABASE_KEY` y opcional `VISION_MIN_INTERVAL` (default 10s entre llamadas a Gemini).
+**Variables de entorno**: copiá `.env.example` como `.env` (queda git-ignored) y
+completá los valores — `run.ps1` lo carga solo antes de cada corrida (sin `.env`
+local cae al `backend\.env`; lo que ya venga seteado en el entorno tiene
+prioridad). Si corrés `run.py` a mano sin `run.ps1`, cargá las variables antes.
 
 > [!important] Cuál key de Supabase va acá
 > La **SECRET key** (`sb_secret_...`): Project Settings → API Keys → pestaña
