@@ -80,7 +80,9 @@ def call_gemini_json(model: str, api_key: str, prompt: str, image: tuple[str, st
 
 def run_cascade(prompt: str, api_key: str, image: tuple[str, str] | None = None) -> tuple[list | None, int | None]:
     """Recorre GEMINI_MODELS con UNA api_key; el primero que responde OK gana; el
-    siguiente solo se prueba ante 429/503/404. Devuelve (parsed, last_status)."""
+    siguiente se prueba ante 429/503/404 o error de red/parseo (status None) — un
+    HTTP no reintentable (400/401/403) fallaría igual en todos, ahí sí corta.
+    Devuelve (parsed, last_status)."""
     parsed: list | None = None
     status: int | None = None
     for idx, model in enumerate(GEMINI_MODELS):
@@ -89,10 +91,11 @@ def run_cascade(prompt: str, api_key: str, image: tuple[str, str] | None = None)
             if idx > 0:
                 print(f"DEBUG Gemini: fallback EXITOSO con {model}")
             return parsed, status
-        if status not in GEMINI_RETRY_STATUSES:
+        if status is not None and status not in GEMINI_RETRY_STATUSES:
             return None, status
         if idx + 1 < len(GEMINI_MODELS):
-            print(f"DEBUG Gemini: HTTP {status} en {model}, probando fallback {GEMINI_MODELS[idx + 1]}")
+            causa = f"HTTP {status}" if status is not None else "error de red/parseo"
+            print(f"DEBUG Gemini: {causa} en {model}, probando fallback {GEMINI_MODELS[idx + 1]}")
     return None, status
 
 

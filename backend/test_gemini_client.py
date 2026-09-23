@@ -23,6 +23,21 @@ def test_run_cascade_fallback_en_429(monkeypatch):
     assert parsed == [{"ok": True}]
 
 
+def test_run_cascade_error_de_red_prueba_siguiente(monkeypatch):
+    """Timeout/parseo (status None) no aborta la cascada: el siguiente modelo
+    puede responder (medido 2026-09-23: 503 en 2.5-flash + read-timeout en
+    2.5-flash-lite dejaban sin probar los 3.x)."""
+    def fake(model, api_key, prompt, image=None):
+        if model == gc.GEMINI_MODELS[0]:
+            return (None, 503)
+        if model == gc.GEMINI_MODELS[1]:
+            return (None, None)  # error de red (read timeout)
+        return ([{"ok": True}], None)
+    monkeypatch.setattr(gc, "call_gemini_json", fake)
+    parsed, _ = gc.run_cascade("p", "k")
+    assert parsed == [{"ok": True}]
+
+
 def test_run_cascade_error_no_reintentable_corta(monkeypatch):
     llamadas = []
     def fake(model, api_key, prompt, image=None):
