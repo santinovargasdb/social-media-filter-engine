@@ -11,7 +11,8 @@ Diseño completo: `docs/superpowers/specs/2026-09-21-scraper-local-vision-design
 - ✅ **Fase 1:** almacén Supabase (`backend/store.py`) + modo `stored` + "Última actualización".
 - ✅ **Fase 2:** `vision.py` (captura → Gemini visión → posts). Smoke test: `testdata/README.md`.
 - ✅ **Fase 3:** el scraper de X (`accounts.py` + `browser.py` + `dedup.py` + `run.py`).
-  Falta el tuning en la PC de la oficina (selectores/tiempos con X real).
+  **En producción desde 2026-09-23**: corre en la PC de la oficina vía Task
+  Scheduler (tarea "SMATA Boca de Urna - Scraper", 10:00 y 16:00).
 - ⏳ Fase 4: Instagram y TikTok.
 
 ## 1) Crear la tabla en Supabase
@@ -126,10 +127,13 @@ prioridad). Si corrés `run.py` a mano sin `run.ps1`, cargá las variables antes
 .venv\Scripts\python run.py            # sube el snapshot a Supabase
 ```
 
-**Task Scheduler** (2-3×/día): crear una tarea básica que ejecute
-`powershell -ExecutionPolicy Bypass -File "<ruta>\scraper_local\run.ps1"`
-en los horarios elegidos (ej. 09:00, 14:00, 19:00). Config editable en
-`config.json` (scrolls, esperas, candidatos, mínimo de posts para subir).
+**Task Scheduler** (2-3×/día; ojo: el free-tier de Gemini banca ~2-3 corridas/día):
+crear una tarea básica que ejecute
+`powershell -NoProfile -File "<ruta>\scraper_local\run.ps1"`
+en los horarios elegidos (con la PC prendida). Agregá `-ExecutionPolicy Bypass`
+SOLO si la política de la máquina bloquea scripts locales (con RemoteSigned no
+hace falta). Config editable en `config.json` (scrolls, esperas, candidatos,
+mínimo de posts para subir).
 
 **Qué tunear allá si algo no anda** (es lo esperable, X cambia):
 - `browser.py`: `SELECTOR_FEED` (hoy `article`), `MARCAS_SESION_MUERTA`, `TIMEOUT_FEED_MS`.
