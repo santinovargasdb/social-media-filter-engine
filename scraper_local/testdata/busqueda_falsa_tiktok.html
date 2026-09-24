@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Búsqueda falsa TikTok — smoke test de vision.py — contenido inventado</title>
+<style>
+  body { margin:0; background:#121212; color:#fff;
+         font-family:"Segoe UI",Arial,sans-serif; display:flex; justify-content:center; }
+  .pagina { width:700px; padding:20px 0; }
+  h2 { font-size:18px; font-weight:600; margin:0 0 12px 4px; color:#ccc; }
+  /* Card de resultado de búsqueda */
+  .card { display:flex; gap:12px; padding:12px 8px; border-bottom:1px solid #2a2a2a;
+          align-items:flex-start; }
+  .card[data-e2e="search_top-item"] { background:#121212; }
+  .thumb { width:120px; height:68px; border-radius:6px; flex-shrink:0; background:#2a2a2a;
+           display:flex; align-items:center; justify-content:center; font-size:28px; }
+  .info { flex:1; min-width:0; }
+  .info a { color:#fff; text-decoration:none; display:block; }
+  .desc { font-size:14px; line-height:1.4; margin:0 0 6px; }
+  .autor { font-size:12px; color:#aaa; }
+  .stats { font-size:12px; color:#888; margin-top:4px; display:flex; gap:14px; }
+  /* Card promocionada */
+  .card.promo .info a { color:#ccc; }
+  .promo-tag { font-size:11px; color:#888; background:#2a2a2a; border-radius:4px;
+               padding:1px 5px; display:inline-block; margin-top:4px; }
+</style>
+</head>
+<body>
+<div class="pagina">
+  <h2>Resultados para "Milei elecciones"</h2>
+
+  <!-- Card 1: a_favor Milei -->
+  <div class="card" data-e2e="search_top-item">
+    <div class="thumb">🎙️</div>
+    <div class="info">
+      <a href="https://www.tiktok.com/@LibertyFanPage/video/7380000000000000001">
+        <p class="desc">Milei arrasa en la encuesta de esta semana. El proyecto libertad está ganando
+        a lo grande — acá los números que los medios no te muestran. #VivaMilei #Libertad</p>
+        <span class="autor">@LibertyFanPage · 182k vistas</span>
+      </a>
+      <div class="stats"><span>❤️ 9.2k</span><span>💬 344</span><span>↗ 1.1k</span></div>
+    </div>
+  </div>
+
+  <!-- Card 2: en_contra Milei -->
+  <div class="card" data-e2e="search_top-item">
+    <div class="thumb">📊</div>
+    <div class="info">
+      <a href="https://www.tiktok.com/@AnalisisPoliticoAR/video/7380000000000000002">
+        <p class="desc">El ajuste de Milei destruyó el poder adquisitivo: sueldos que no alcanzan
+        para llegar a fin de mes. Así va el balance de su primer año.</p>
+        <span class="autor">@AnalisisPoliticoAR · 67k vistas</span>
+      </a>
+      <div class="stats"><span>❤️ 3.4k</span><span>💬 891</span><span>↗ 210</span></div>
+    </div>
+  </div>
+
+  <!-- Card 3: neutro — encuesta con punteros Milei/Kicillof y tercero Manes -->
+  <div class="card" data-e2e="search_top-item">
+    <div class="thumb">🗳️</div>
+    <div class="info">
+      <a href="https://www.tiktok.com/@DataElectoralTK/video/7380000000000000003">
+        <p class="desc">Encuesta Consultora Delta sept. 2026: Milei 40%, Kicillof 35%, Manes 4%,
+        indecisos 11%. La polarización sigue firme de cara a las legislativas. #Elecciones2027</p>
+        <span class="autor">@DataElectoralTK · 210k vistas</span>
+      </a>
+      <div class="stats"><span>❤️ 11k</span><span>💬 1.2k</span><span>↗ 3.3k</span></div>
+    </div>
+  </div>
+
+  <!-- Card promocionada (NO debe procesarse como resultado electoral) -->
+  <div class="card promo">
+    <div class="thumb">🛒</div>
+    <div class="info">
+      <a href="https://www.tiktok.com/@TiendaOfertasAR/video/7380000000000000099">
+        <p class="desc">🔥 Hot Sale en zapatillas — 3x2 + envío gratis a todo el país.
+        ¡Comprá ahora y recibís mañana!</p>
+        <span class="autor">@TiendaOfertasAR · Promocionado</span>
+      </a>
+      <span class="promo-tag">Promocionado</span>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

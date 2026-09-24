@@ -35,3 +35,39 @@ cero posts prohibidos. La fecha puede variar en formato ("2 h" vs "2h") — no e
 criterio. Si Gemini falla una postura, ajustar el PROMPT en `vision.py` (no la
 regla compartida `REGLAS_CANDIDATOS`, que es del clasificador de texto también) y
 re-correr.
+
+---
+
+## TikTok falso (`busqueda_falsa_tiktok.html`)
+
+`busqueda_falsa_tiktok.html` simula la página de búsqueda de TikTok con **3 cards de
+resultado** (`data-e2e="search_top-item"`) y **1 card Promocionado** (sin
+`data-e2e`). Sirve para:
+
+- **(a) Tuning de `links_de_videos`**: verificar que `redes/tiktok.py` extrae los 3
+  hrefs de video (todos con `/video/`) y descarta el card Promocionado.
+- **(b) Dry-run de la maquinaria** con `browser.py --url` apuntando al archivo local.
+- **(c) Smoke de visión**: screenshotear el HTML y pasarle la captura a `vision.py`.
+
+### Smoke de visión
+
+Capturar el HTML (Playwright o cualquier navegador, ancho ~950px, full-page),
+guardar como `busqueda_falsa_tiktok.png` y correr:
+
+```
+backend\.venv\Scripts\python.exe scraper_local\vision.py scraper_local\testdata\busqueda_falsa_tiktok.png --red tiktok
+```
+
+### Resultados esperados
+
+| # | autor | es_electoral | candidatos (postura) |
+|---|-------|--------------|----------------------|
+| 1 | @LibertyFanPage | true | Javier Milei (a_favor) |
+| 2 | @AnalisisPoliticoAR | true | Javier Milei (en_contra) |
+| 3 | @DataElectoralTK | true | Javier Milei (a_favor), Axel Kicillof (a_favor), Facundo Manes (en_contra) — regla de encuestas: punteros a_favor, marginal en_contra |
+
+**NO debe aparecer:** el card Promocionado (@TiendaOfertasAR).
+
+Criterio de aprobación: los 3 cards de la tabla extraídos con autor y postura;
+cero cards prohibidos. Si Gemini falla una postura, ajustar el PROMPT en
+`vision.py` y re-correr.
