@@ -1,13 +1,15 @@
 """
-Cuentas descartables de X para el scraper local (Fase 3).
+Cuentas descartables POR RED para el scraper local (`--red`, default twitter).
 
-Pool en accounts.json (GIT-IGNORED) con estado por cuenta; las cookies
-(storage_state de Playwright) viven en .sesiones/<alias>.json (GIT-IGNORED).
-El login es MANUAL una sola vez por cuenta — sin passwords guardados:
+Pool en accounts.json (twitter, legacy) / accounts-<red>.json; las cookies
+(storage_state de Playwright) viven en .sesiones/<alias>.json (twitter, legacy)
+/ .sesiones/<red>-<alias>.json. El login es MANUAL una sola vez por cuenta —
+sin passwords guardados:
 
-    python accounts.py login <alias>   # navegador visible, logueás a mano;
-                                       # detecta solo cuando estás adentro
-    python accounts.py estado          # lista el pool
+    python accounts.py login <alias>            # X (twitter)
+    python accounts.py login <alias> --red tiktok
+    python accounts.py estado                   # lista el pool de twitter
+    python accounts.py estado --red tiktok
 
 Playwright se importa DIFERIDO (solo lo usa el CLI de login): la suite corre
 sin playwright instalado.
@@ -18,27 +20,35 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
-RUTA_POOL = BASE_DIR / "accounts.json"
-DIR_SESIONES = BASE_DIR / ".sesiones"
+import redes
 
-X_LOGIN_URL = "https://x.com/login"
-# Al completar el login X redirige a /home — eso es lo que se espera para guardar
-# la sesión (sin pedir Enter: este CLI también corre sin stdin interactivo).
-X_HOME_GLOB = "**/home*"
+BASE_DIR = Path(__file__).resolve().parent
+
 LOGIN_TIMEOUT_MS = 300_000  # 5 min para loguear a mano
 
 
-def cargar_pool(ruta=None) -> dict:
-    ruta = Path(ruta) if ruta else RUTA_POOL
+def ruta_pool(red: str = "twitter") -> Path:
+    """twitter conserva accounts.json (legacy, pre multi-red); el resto va por red."""
+    nombre = "accounts.json" if red == "twitter" else f"accounts-{red}.json"
+    return BASE_DIR / nombre
+
+
+def cargar_pool(ruta=None, red: str = "twitter") -> dict:
+    ruta = Path(ruta) if ruta else ruta_pool(red)
     if not ruta.exists():
         return {"cuentas": []}
     return json.loads(ruta.read_text(encoding="utf-8"))
 
 
-def guardar_pool(pool: dict, ruta=None) -> None:
-    ruta = Path(ruta) if ruta else RUTA_POOL
+def guardar_pool(pool: dict, ruta=None, red: str = "twitter") -> None:
+    ruta = Path(ruta) if ruta else ruta_pool(red)
     ruta.write_text(json.dumps(pool, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def ruta_sesion(alias: str, red: str = "twitter") -> Path:
+    """twitter conserva <alias>.json (las sesiones ya logueadas siguen valiendo)."""
+    nombre = f"{alias}.json" if red == "twitter" else f"{red}-{alias}.json"
+    return BASE_DIR / ".sesiones" / nombre
 
 
 def proxima_cuenta(pool: dict) -> dict | None:
@@ -61,15 +71,13 @@ def marcar_quemada(pool: dict, alias: str) -> None:
             c["estado"] = "quemada"
 
 
-def ruta_sesion(alias: str) -> Path:
-    return DIR_SESIONES / f"{alias}.json"
-
-
-def _login(alias: str) -> int:
-    """Login manual: navegador visible; se guarda solo al detectar la redirección a /home."""
+def _login(alias: str, red: str) -> int:
+    """Login manual: navegador visible; se guarda solo al detectar que el login terminó
+    (la detección es por red: X redirige a /home, TikTok sale de /login)."""
     from playwright.sync_api import sync_playwright  # diferido: solo el CLI lo necesita
-    DIR_SESIONES.mkdir(exist_ok=True)
-    pool = cargar_pool()
+    red_mod = redes.POR_NOMBRE[red]
+    (BASE_DIR / ".sesiones").mkdir(exist_ok=True)
+    pool = cargar_pool(red=red)
     if not any(c.get("alias") == alias for c in pool.get("cuentas", [])):
         pool.setdefault("cuentas", []).append(
             {"alias": alias, "estado": "activa", "ultima_vez": "", "notas": ""})
@@ -87,13 +95,13 @@ def _login(alias: str) -> int:
                   "--disable-blink-features=AutomationControlled"])
         context = browser.new_context(no_viewport=True)
         page = context.new_page()
-        page.goto(X_LOGIN_URL)
-        print(f"Logueá la cuenta '{alias}' en la ventana del navegador.")
-        print("(Usá el login con mail+contraseña de X, NO el botón de Google. "
+        page.goto(red_mod.LOGIN_URL)
+        print(f"Logueá la cuenta '{alias}' de {red} en la ventana del navegador.")
+        print("(Usá el login nativo con mail+contraseña, NO 'Continuar con Google'. "
               "Si algo queda recortado: scrolleá dentro del modal o achicá con Ctrl+menos.)")
-        print("Cuando estés adentro se guarda solo (detecta la redirección al timeline).")
+        print("Cuando estés adentro se guarda solo (detecta que saliste del login).")
         try:
-            page.wait_for_url(X_HOME_GLOB, timeout=LOGIN_TIMEOUT_MS)
+            page.wait_for_url(red_mod.login_completado, timeout=LOGIN_TIMEOUT_MS)
         except Exception:
             print(f"ERROR: no se detectó el login en {LOGIN_TIMEOUT_MS // 60000} min "
                   "(o se cerró la ventana). La cuenta NO se agregó; reintentá.")
@@ -102,37 +110,39 @@ def _login(alias: str) -> int:
             except Exception:
                 pass
             return 1
-        context.storage_state(path=str(ruta_sesion(alias)))
+        context.storage_state(path=str(ruta_sesion(alias, red)))
         browser.close()
     for c in pool["cuentas"]:
         if c["alias"] == alias:
             c["estado"] = "activa"
-    guardar_pool(pool)
-    print(f"Sesión guardada en {ruta_sesion(alias)}. Cuenta '{alias}' activa.")
+    guardar_pool(pool, red=red)
+    print(f"Sesión guardada en {ruta_sesion(alias, red)}. Cuenta '{alias}' activa.")
     return 0
 
 
-def _estado() -> int:
-    pool = cargar_pool()
+def _estado(red: str) -> int:
+    pool = cargar_pool(red=red)
     if not pool.get("cuentas"):
-        print("Pool vacío. Agregá cuentas con: python accounts.py login <alias>")
+        print(f"Pool de {red} vacío. Agregá cuentas con: python accounts.py login <alias> --red {red}")
         return 0
     for c in pool["cuentas"]:
-        sesion = "sesión OK" if ruta_sesion(c["alias"]).exists() else "SIN sesión"
+        sesion = "sesión OK" if ruta_sesion(c["alias"], red).exists() else "SIN sesión"
         print(f"- {c['alias']}: {c['estado']} · {sesion} · última vez: {c.get('ultima_vez') or 'nunca'}")
     return 0
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Cuentas descartables del scraper (login manual).")
+    ap = argparse.ArgumentParser(description="Cuentas descartables del scraper (login manual, por red).")
     sub = ap.add_subparsers(dest="cmd", required=True)
     login = sub.add_parser("login", help="login manual de una cuenta (navegador visible)")
     login.add_argument("alias")
-    sub.add_parser("estado", help="lista el pool")
+    login.add_argument("--red", default="twitter", choices=sorted(redes.POR_NOMBRE))
+    estado = sub.add_parser("estado", help="lista el pool")
+    estado.add_argument("--red", default="twitter", choices=sorted(redes.POR_NOMBRE))
     args = ap.parse_args(argv)
     if args.cmd == "login":
-        return _login(args.alias)
-    return _estado()
+        return _login(args.alias, args.red)
+    return _estado(args.red)
 
 
 if __name__ == "__main__":
