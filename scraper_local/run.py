@@ -1,17 +1,16 @@
 """
-Orquestador del scraper local (Fase 3) — lo dispara Task Scheduler 2-3×/día.
+Orquestador del scraper local — lo dispara Task Scheduler 2-3×/día.
 
-Por candidato: capturas de la búsqueda de X (browser, rotando cuentas si se
-queman) → lectura con Gemini visión (vision.read_capture, paceada por
-VISION_MIN_INTERVAL) → dedup global → agregación REUSANDO la lógica del backend
-(electoral._merge_bloques / build_evidence / compare_vs_pollsters) → snapshot a
-Supabase (store.write_snapshot).
+Por red × candidato: capturas (browser/redes, rotando cuentas si se queman) →
+lectura con Gemini visión → dedup por red → un bloque por red → agregación
+REUSANDO la lógica del backend (electoral._merge_bloques fusiona y calcula
+por_red) → snapshot a Supabase.
 
 Regla de seguridad: si la corrida no junta `min_posts_electorales` posts
 electorales, o la subida falla, NO se pisa el snapshot anterior y el exit code
 es 1 (Task Scheduler lo registra como fallo).
 
-Uso:  python run.py [--dry-run] [--config ruta]
+Uso:  python run.py [--dry-run] [--config ruta] [--redes twitter,tiktok]
 """
 import argparse
 import json
@@ -31,6 +30,7 @@ if BACKEND_DIR not in sys.path:
 import accounts  # noqa: E402
 import browser  # noqa: E402
 import dedup  # noqa: E402
+import redes  # noqa: E402
 import vision  # noqa: E402
 import electoral  # noqa: E402
 import store  # noqa: E402
@@ -42,9 +42,8 @@ DIR_LOGS = BASE_DIR / "logs"
 log = logging.getLogger("urna.scraper")
 
 CONFIG_DEFAULT = {
-    "red": "twitter",
+    "redes": {"twitter": {"scrolls_por_candidato": 3}},
     "candidatos": None,  # None = electoral.CANDIDATOS_DEFAULT
-    "scrolls_por_candidato": 3,
     "espera_entre_scrolls": [2, 5],
     "espera_entre_candidatos": [20, 40],
     "viewport": [950, 1300],
@@ -59,12 +58,34 @@ def cargar_config(ruta=None) -> dict:
     ruta = Path(ruta) if ruta else RUTA_CONFIG
     if ruta.exists():
         cfg.update(json.loads(ruta.read_text(encoding="utf-8")))
+    # Formato legacy (Fase 3): "red" + "scrolls_por_candidato" planos.
+    if "red" in cfg:
+        cfg["redes"] = {cfg.pop("red"): {
+            "scrolls_por_candidato": cfg.pop("scrolls_por_candidato", 3)}}
+    return cfg
+
+
+def filtrar_redes(cfg: dict, redes_csv: str | None) -> dict:
+    """Acota cfg["redes"] a las de --redes (coma-separado). Aborta si no queda ninguna."""
+    if redes_csv:
+        pedidas = {r.strip() for r in redes_csv.split(",") if r.strip()}
+        cfg["redes"] = {k: v for k, v in cfg["redes"].items() if k in pedidas}
+    if not cfg["redes"]:
+        msg = (
+            "config sin redes activas." if redes_csv is None
+            else f"--redes '{redes_csv}': ninguna red del config coincide."
+        )
+        sys.exit(msg)
     return cfg
 
 
 def _author_url(autor: str, red: str) -> str:
-    if red == "twitter" and autor.startswith("@"):
+    if not autor.startswith("@"):
+        return ""
+    if red == "twitter":
         return f"https://x.com/{autor[1:]}"
+    if red == "tiktok":
+        return f"https://www.tiktok.com/{autor}"
     return ""
 
 
@@ -74,11 +95,12 @@ def _slug(nombre: str) -> str:
 
 def armar_bloque(posts: list[dict], red: str, busquedas: int, crudos: int, errores: int) -> dict:
     """Mapea los posts de visión (ya deduplicados) al shape de bloque de electoral.
-    En visión extraer y clasificar es UNA pasada, así que analizados == encontrados."""
+    En visión extraer y clasificar es UNA pasada, así que analizados == encontrados.
+    Los IDs usan f"{red}_{i}" para evitar colisiones al fusionar bloques de distintas redes."""
     posts_by_id: dict[str, dict] = {}
     analysis: list[dict] = []
     for i, post in enumerate(posts):
-        pid = f"Post_{i}"
+        pid = f"{red}_{i}"
         autor = post.get("autor") or ""
         posts_by_id[pid] = {
             "network": red, "author": autor, "author_url": _author_url(autor, red),
@@ -95,9 +117,9 @@ def armar_bloque(posts: list[dict], red: str, busquedas: int, crudos: int, error
     return {"network": red, "posts_by_id": posts_by_id, "analysis": analysis, "status": status}
 
 
-def armar_payload(bloque: dict, warnings: list[str]) -> dict:
+def armar_payload(bloques: list[dict], warnings: list[str]) -> dict:
     """Arma el payload del snapshot con la MISMA forma que electoral.run_boca_de_urna."""
-    candidatos, baja_conf, posts_by_id, analysis = electoral._merge_bloques([bloque])
+    candidatos, baja_conf, posts_by_id, analysis = electoral._merge_bloques(bloques)
     evidencia = electoral.build_evidence(analysis, posts_by_id)
     comparacion, comp_warnings = electoral.compare_vs_pollsters(candidatos, [])
     warnings = list(warnings) + list(comp_warnings)
@@ -107,42 +129,42 @@ def armar_payload(bloque: dict, warnings: list[str]) -> dict:
     posts_electorales = sum(1 for a in analysis if a.get("es_electoral"))
     return {
         "candidatos": candidatos, "evidencia": evidencia, "comparacion": comparacion,
-        "meta": {"total_posts": bloque["status"]["encontrados"],
+        "meta": {"total_posts": sum(b["status"]["encontrados"] for b in bloques),
                  "posts_electorales": posts_electorales,
-                 "analizados": bloque["status"]["analizados"],
-                 "bloques": [bloque["status"]],
+                 "analizados": sum(b["status"]["analizados"] for b in bloques),
+                 "bloques": [b["status"] for b in bloques],
                  "disclaimer": electoral.DISCLAIMER, "warnings": warnings},
     }
 
 
-def capturar_candidato(cfg: dict, pool: dict, candidato: str, carpeta: Path,
-                       warnings: list[str]) -> list[Path]:
-    """Capturas de UN candidato, rotando la cuenta UNA vez si se quema.
+def capturar_candidato(red_nombre: str, cfg: dict, pool: dict, candidato: str,
+                       carpeta: Path, warnings: list[str]) -> list[dict]:
+    """Capturas de UN candidato en UNA red, rotando la cuenta UNA vez si se quema.
     Devuelve [] si no se pudo (el resto de la corrida sigue)."""
+    red_mod = redes.POR_NOMBRE[red_nombre]
     for _intento in range(2):  # cuenta actual + una rotación
         cuenta = accounts.proxima_cuenta(pool)
         if cuenta is None:
-            warnings.append(f"Sin cuentas activas: '{candidato}' quedó sin capturar.")
+            warnings.append(f"[{red_nombre}] Sin cuentas activas: '{candidato}' quedó sin capturar.")
             return []
         try:
-            rutas = browser.capturar_busqueda(
-                sesion=accounts.ruta_sesion(cuenta["alias"]), termino=candidato,
-                scrolls=cfg["scrolls_por_candidato"], viewport=tuple(cfg["viewport"]),
-                headless=cfg["headless"], esperas=tuple(cfg["espera_entre_scrolls"]),
-                carpeta=carpeta, prefijo=_slug(candidato))
+            capturas = red_mod.capturar(
+                sesion=accounts.ruta_sesion(cuenta["alias"], red_nombre), termino=candidato,
+                cfg=cfg, cfg_red=cfg["redes"][red_nombre], carpeta=carpeta,
+                prefijo=f"{red_nombre}-{_slug(candidato)}", warnings=warnings)
             accounts.registrar_uso(pool, cuenta["alias"])
-            return rutas
+            return capturas
         except browser.SesionInvalidaError as e:
-            log.warning("Cuenta '%s' quemada/challenge: %s", cuenta["alias"], e)
+            log.warning("[%s] Cuenta '%s' quemada/challenge: %s", red_nombre, cuenta["alias"], e)
             accounts.marcar_quemada(pool, cuenta["alias"])
-            warnings.append(f"Cuenta '{cuenta['alias']}' marcada como quemada.")
+            warnings.append(f"[{red_nombre}] Cuenta '{cuenta['alias']}' marcada como quemada.")
         except Exception as e:
             # Error inesperado del browser (Playwright caído, sesión ilegible, etc.):
             # no es evidencia de cuenta quemada — se registra y la corrida sigue.
-            log.error("Error inesperado capturando '%s': %s", candidato, e)
-            warnings.append(f"'{candidato}' quedó sin capturar (error del navegador: {e}).")
+            log.error("[%s] Error inesperado capturando '%s': %s", red_nombre, candidato, e)
+            warnings.append(f"[{red_nombre}] '{candidato}' quedó sin capturar (error del navegador: {e}).")
             return []
-    warnings.append(f"'{candidato}' quedó sin capturar (dos cuentas fallaron).")
+    warnings.append(f"[{red_nombre}] '{candidato}' quedó sin capturar (dos cuentas fallaron).")
     return []
 
 
@@ -159,32 +181,37 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
     inicio = datetime.now(timezone.utc)
     carpeta = DIR_CAPTURAS / inicio.strftime("%Y%m%d-%H%M")
     warnings: list[str] = []
-    red = cfg["red"]
     candidatos = cfg.get("candidatos") or electoral.CANDIDATOS_DEFAULT
 
-    pool = accounts.cargar_pool()
-    posts_crudos: list[dict] = []
-    errores = 0
-    for i, candidato in enumerate(candidatos):
-        log.info("Candidato %d/%d: %s", i + 1, len(candidatos), candidato)
-        rutas = capturar_candidato(cfg, pool, candidato, carpeta, warnings)
-        for ruta in rutas:
-            leidos = vision.read_capture(ruta, red, candidatos)
-            if leidos is None:
-                errores += 1
-                warnings.append(f"Lectura fallida (Gemini) de {ruta.name}.")
-                continue
-            posts_crudos.extend(leidos)
-        if i + 1 < len(candidatos) and rutas:
-            browser.esperar_aleatorio(tuple(cfg["espera_entre_candidatos"]))
-    accounts.guardar_pool(pool)
+    bloques: list[dict] = []
+    for red_nombre in cfg["redes"]:
+        if red_nombre not in redes.POR_NOMBRE:
+            warnings.append(f"Red desconocida en config: '{red_nombre}' (se saltea).")
+            continue
+        pool = accounts.cargar_pool(red=red_nombre)
+        crudos_red: list[dict] = []
+        errores = 0
+        for i, candidato in enumerate(candidatos):
+            log.info("[%s] Candidato %d/%d: %s", red_nombre, i + 1, len(candidatos), candidato)
+            capturas = capturar_candidato(red_nombre, cfg, pool, candidato, carpeta, warnings)
+            for cap in capturas:
+                leidos = vision.read_capture(cap["ruta"], red_nombre, candidatos,
+                                             contexto=cap["contexto"])
+                if leidos is None:
+                    errores += 1
+                    warnings.append(f"Lectura fallida (Gemini) de {cap['ruta'].name}.")
+                    continue
+                crudos_red.extend(leidos)
+            if i + 1 < len(candidatos) and capturas:
+                browser.esperar_aleatorio(tuple(cfg["espera_entre_candidatos"]))
+        accounts.guardar_pool(pool, red=red_nombre)
+        posts_red = dedup.dedup_posts(crudos_red)
+        log.info("[%s] Posts: %d crudos, %d tras dedup, %d errores de lectura.",
+                 red_nombre, len(crudos_red), len(posts_red), errores)
+        bloques.append(armar_bloque(posts_red, red_nombre, busquedas=len(candidatos),
+                                    crudos=len(crudos_red), errores=errores))
 
-    posts = dedup.dedup_posts(posts_crudos)
-    log.info("Posts: %d crudos, %d tras dedup, %d errores de lectura.",
-             len(posts_crudos), len(posts), errores)
-    bloque = armar_bloque(posts, red, busquedas=len(candidatos),
-                          crudos=len(posts_crudos), errores=errores)
-    payload = armar_payload(bloque, warnings)
+    payload = armar_payload(bloques, warnings)
     pe = payload["meta"]["posts_electorales"]
 
     if dry_run:
@@ -209,6 +236,8 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="no sube el snapshot ni limpia capturas; imprime el meta")
     ap.add_argument("--config", default=None, help="ruta alternativa de config.json")
+    ap.add_argument("--redes", default=None,
+                    help="coma-separado (ej. twitter,tiktok); acota la corrida a esas redes")
     args = ap.parse_args(argv)
     DIR_LOGS.mkdir(exist_ok=True)
     logging.basicConfig(
@@ -218,6 +247,7 @@ def main(argv=None) -> int:
                       DIR_LOGS / f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.log",
                       encoding="utf-8")])
     cfg = cargar_config(args.config)
+    cfg = filtrar_redes(cfg, args.redes)
     return correr(cfg, dry_run=args.dry_run)
 
 

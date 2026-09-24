@@ -154,3 +154,24 @@ def test_cli_pasa_candidatos_y_falla_con_upstream(monkeypatch, capsys, tmp_path)
     assert rc == 1
     assert visto["candidatos"] == ["Juan Pérez", "Ana López"]
     assert "no respondió" in capsys.readouterr().err
+
+
+def test_build_prompt_incluye_contexto():
+    prompt = vision._build_vision_prompt("tiktok", ["Javier Milei"],
+                                         contexto="panel de comentarios de un video")
+    assert "CONTEXTO DE LA CAPTURA: panel de comentarios de un video" in prompt
+    assert '"tiktok"' in prompt
+
+
+def test_build_prompt_sin_contexto_no_agrega_seccion():
+    prompt = vision._build_vision_prompt("twitter", ["Javier Milei"])
+    assert "CONTEXTO DE LA CAPTURA" not in prompt
+
+
+def test_read_capture_pasa_contexto_al_prompt(monkeypatch, tmp_path):
+    monkeypatch.setenv("VISION_MIN_INTERVAL", "0")
+    cap = tmp_path / "cap.png"
+    cap.write_bytes(b"x")
+    visto = _mock_gemini(monkeypatch)
+    vision.read_capture(cap, "tiktok", contexto="comentarios sobre Milei")
+    assert "CONTEXTO DE LA CAPTURA: comentarios sobre Milei" in visto["prompt"]

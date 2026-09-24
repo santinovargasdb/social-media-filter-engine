@@ -13,7 +13,8 @@ Diseño completo: `docs/superpowers/specs/2026-09-21-scraper-local-vision-design
 - ✅ **Fase 3:** el scraper de X (`accounts.py` + `browser.py` + `dedup.py` + `run.py`).
   **En producción desde 2026-09-23**: corre en la PC de la oficina vía Task
   Scheduler (tarea "SMATA Boca de Urna - Scraper", 10:00 y 16:00).
-- ⏳ Fase 4: Instagram y TikTok.
+- ✅ **Fase 4a:** TikTok (`redes/tiktok.py`) — búsqueda + comentarios top de punteros.
+- ⏳ **Fase 4b:** Instagram.
 
 ## 1) Crear la tabla en Supabase
 En el proyecto de Supabase → **SQL Editor** → correr:
@@ -102,8 +103,13 @@ prioridad). Si corrés `run.py` a mano sin `run.ps1`, cargá las variables antes
 **Cuentas** (descartables, login manual una sola vez por cuenta):
 
 ```powershell
-.venv\Scripts\python accounts.py login cuenta1   # se abre el navegador: logueá a mano; guarda solo al llegar al timeline
-.venv\Scripts\python accounts.py estado          # ver el pool
+# X / Twitter
+.venv\Scripts\python accounts.py login cuenta1            # se abre el navegador: logueá a mano; guarda solo al llegar al timeline
+.venv\Scripts\python accounts.py estado                   # ver el pool de Twitter
+
+# TikTok (Fase 4a)
+.venv\Scripts\python accounts.py login tt1 --red tiktok   # igual: logueá a mano en la ventana
+.venv\Scripts\python accounts.py estado --red tiktok      # ver el pool de TikTok
 ```
 
 > [!warning] En esa ventana usá el login NATIVO de X (usuario + contraseña)
@@ -127,16 +133,48 @@ prioridad). Si corrés `run.py` a mano sin `run.ps1`, cargá las variables antes
 .venv\Scripts\python run.py            # sube el snapshot a Supabase
 ```
 
-**Task Scheduler** (2-3×/día; ojo: el free-tier de Gemini banca ~2-3 corridas/día):
-crear una tarea básica que ejecute
-`powershell -NoProfile -File "<ruta>\scraper_local\run.ps1"`
-en los horarios elegidos (con la PC prendida). Agregá `-ExecutionPolicy Bypass`
-SOLO si la política de la máquina bloquea scripts locales (con RemoteSigned no
-hace falta). Config editable en `config.json` (scrolls, esperas, candidatos,
-mínimo de posts para subir).
+**Config (`config.json`)** — formato `"redes": { "twitter": {...}, "tiktok": {...} }`.
+Claves de TikTok:
 
-**Qué tunear allá si algo no anda** (es lo esperable, X cambia):
-- `browser.py`: `SELECTOR_FEED` (hoy `article`), `MARCAS_SESION_MUERTA`, `TIMEOUT_FEED_MS`.
-- `config.json`: esperas más largas si X muestra challenges; `headless: false` para VER
+| Clave | Descripción |
+|-------|-------------|
+| `videos_comentarios` | cuántos videos de cada puntero abrir para capturar comentarios |
+| `scrolls_comentarios` | scrolls dentro del panel de comentarios por video |
+| `candidatos_comentarios` | lista de candidatos cuyos videos también se comentan (punteros) |
+
+> [!note] Cuota de visión TikTok
+> TikTok solo corre en la tarea de las **16:00** (`-Redes twitter,tiktok`). Eso agrega
+> ~56 llamadas extra a Gemini visión; el total del día queda ~128, bajo el techo medido
+> el 2026-09-23 para el free-tier. Twitter + TikTok en la misma corrida de las 16:00.
+
+**Task Scheduler** — dos tareas (con la PC prendida). Agregá `-ExecutionPolicy Bypass`
+SOLO si la política de la máquina bloquea scripts locales (con RemoteSigned no hace falta):
+
+| Hora | Nombre de tarea | Comando |
+|------|-----------------|---------|
+| 10:00 | SMATA Boca de Urna - Twitter | `powershell -NoProfile -File "<ruta>\scraper_local\run.ps1" -Redes twitter` |
+| 16:00 | SMATA Boca de Urna - Twitter+TikTok | `powershell -NoProfile -File "<ruta>\scraper_local\run.ps1" -Redes twitter,tiktok` |
+
+Config editable en `config.json` (scrolls, esperas, candidatos, mínimo de posts para subir).
+
+**Qué tunear allá si algo no anda** (es lo esperable, X y TikTok cambian):
+
+- **Twitter** (`redes/twitter.py`): `SELECTOR_FEED` (hoy `article`),
+  `MARCAS_SESION_MUERTA`, `TIMEOUT_FEED_MS`.
+- **TikTok** (`redes/tiktok.py`): `SELECTOR_RESULTADOS` (hoy `[data-e2e='search_top-item']`),
+  `SELECTOR_LINKS_VIDEO` (hoy `a[href*='/video/']`), `SELECTOR_COMENTARIOS`,
+  `SELECTOR_CAPTCHA`. Los selectores están marcados `# TUNEAR` en el fuente.
+  Para probarlos sin correr la suite completa:
+  ```powershell
+  # Un candidato + dry-run: no navega real, imprime lo que haría
+  .venv\Scripts\python run.py --dry-run --redes tiktok
+  ```
+  O contra el testdata local (sin autenticación):
+  ```powershell
+  # en otra consola: python -m http.server 8123 --bind 127.0.0.1  (desde testdata\)
+  .venv\Scripts\python browser.py --url http://127.0.0.1:8123/busqueda_falsa_tiktok.html --scrolls 2
+  ```
+- `config.json`: esperas más largas si hay challenges; `headless: false` para VER
   qué pasa; menos candidatos para corridas más cortas.
-- Cuentas quemadas: `accounts.py estado` las muestra; reponer con `login <alias-nuevo>`.
+- Cuentas quemadas: `accounts.py estado --red <red>` las muestra; reponer con
+  `login <alias-nuevo> --red <red>`.

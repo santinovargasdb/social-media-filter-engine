@@ -48,3 +48,23 @@ def test_ruta_sesion():
     ruta = accounts.ruta_sesion("cuenta1")
     assert ruta.name == "cuenta1.json"
     assert ruta.parent.name == ".sesiones"
+
+
+def test_ruta_pool_twitter_conserva_legacy():
+    assert accounts.ruta_pool("twitter").name == "accounts.json"
+    assert accounts.ruta_pool("tiktok").name == "accounts-tiktok.json"
+
+
+def test_ruta_sesion_twitter_conserva_legacy():
+    assert accounts.ruta_sesion("cuenta1").name == "cuenta1.json"
+    assert accounts.ruta_sesion("cuenta1", "twitter").name == "cuenta1.json"
+    assert accounts.ruta_sesion("tt1", "tiktok").name == "tiktok-tt1.json"
+
+
+def test_cargar_pool_por_red_usa_su_archivo(tmp_path, monkeypatch):
+    monkeypatch.setattr(accounts, "BASE_DIR", tmp_path)
+    accounts.guardar_pool(_pool(A1), red="tiktok")
+    assert (tmp_path / "accounts-tiktok.json").exists()
+    assert not (tmp_path / "accounts.json").exists()
+    assert accounts.cargar_pool(red="tiktok") == _pool(A1)
+    assert accounts.cargar_pool(red="twitter") == {"cuentas": []}

@@ -53,10 +53,11 @@ calcula `por_red`; el frontend ya lo muestra.
 
 Contrato por red (módulo por archivo):
 
-- `capturar(sesion, termino, cfg_red, carpeta, prefijo) -> list[Path]` — rutas de los
-  PNG; lanza `browser.SesionInvalidaError` ante sesión muerta o challenge.
+- `capturar(sesion, termino, cfg, cfg_red, carpeta, prefijo, warnings) -> list[dict]` —
+  retorna `[{"ruta": Path, "contexto": str}, …]`; lanza `browser.SesionInvalidaError`
+  ante sesión muerta o challenge.
 - Constantes de login para `accounts.py`: `LOGIN_URL` y detección de login terminado
-  (X: llegar a `/home`; TikTok: salir de `/login`, típicamente redirige a `/foryou`).
+  `login_completado(url: str) -> bool` (X: llegar a `/home`; TikTok: salir de `/login`).
 
 **`redes/twitter.py`** — mover `capturar_busqueda` y sus constantes (`X_SEARCH_URL`,
 `SELECTOR_FEED`, `MARCAS_SESION_MUERTA`) desde `browser.py`, sin cambios de

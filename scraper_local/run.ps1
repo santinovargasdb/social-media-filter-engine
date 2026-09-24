@@ -1,4 +1,7 @@
+param([string]$Redes = "")
 # Corrida del scraper local de la Boca de Urna (la dispara Task Scheduler).
+# Parámetro -Redes: lista separada por comas, p.ej. -Redes "twitter,tiktok".
+# Si se omite, run.py usa las redes del config.json.
 # El exit code de run.py se propaga para que el Task Scheduler registre fallos.
 Set-Location $PSScriptRoot
 
@@ -17,5 +20,7 @@ if (Test-Path $envFile) {
     }
 }
 
-& "$PSScriptRoot\.venv\Scripts\python.exe" run.py
+$argumentos = @("run.py")
+if ($Redes) { $argumentos += @("--redes", $Redes) }
+& "$PSScriptRoot\.venv\Scripts\python.exe" @argumentos
 exit $LASTEXITCODE

@@ -48,12 +48,13 @@ def _load_image(image, mime: str | None = None) -> tuple[str, str]:
     return base64.b64encode(data).decode("ascii"), mime
 
 
-def _build_vision_prompt(red: str, candidatos: list[str]) -> str:
+def _build_vision_prompt(red: str, candidatos: list[str], contexto: str = "") -> str:
     lista = ", ".join(candidatos)
+    ctx = f"\nCONTEXTO DE LA CAPTURA: {contexto}.\n" if contexto else ""
     return f"""Sos un analista de opinión pública que evalúas publicaciones de redes sociales del ámbito argentino de cara a las próximas elecciones presidenciales.
 
 Vas a recibir UNA CAPTURA DE PANTALLA de la red social "{red}". Tu tarea es EXTRAER cada publicación visible y clasificarla, en una sola pasada.
-
+{ctx}
 REGLAS DE LECTURA DE PANTALLA (OBLIGATORIAS):
 - Extraé SOLO las publicaciones COMPLETAMENTE visibles. Si una publicación está cortada por un borde de la captura, ignorala.
 - Ignorá la interfaz de la red: menús, buscadores, tendencias, sugerencias ("a quién seguir"), contadores de interacción y publicidad (todo lo marcado "Promocionado" o "Ad"). Las publicidades NO van en la lista de salida — no las incluyas ni siquiera con "es_electoral": false.
@@ -116,11 +117,12 @@ def _sanitize_posts(parsed: list, red: str) -> list[dict]:
 
 
 def read_capture(image, red: str, candidatos: list[str] | None = None,
-                 mime: str | None = None) -> list[dict] | None:
-    """Lee UNA captura con Gemini visión. Devuelve los posts saneados, [] si no se
+                 mime: str | None = None, contexto: str = "") -> list[dict] | None:
+    """Lee UNA captura con Gemini visión. `contexto` describe la captura cuando no es
+    un feed común (ej. panel de comentarios). Devuelve posts saneados, [] si no se
     vio ninguno, o None si el transporte falló (mismo contrato que electoral)."""
     data_b64, mime = _load_image(image, mime)
-    prompt = _build_vision_prompt(red, candidatos or CANDIDATOS_DEFAULT)
+    prompt = _build_vision_prompt(red, candidatos or CANDIDATOS_DEFAULT, contexto)
     _pace()
     parsed, _status = gemini_client.run_with_rotation(prompt, image=(data_b64, mime))
     if parsed is None:

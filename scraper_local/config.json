@@ -1,7 +1,20 @@
 {
-  "red": "twitter",
+  "redes": {
+    "twitter": { "scrolls_por_candidato": 3 },
+    "tiktok": {
+      "scrolls_por_candidato": 3,
+      "videos_comentarios": 2,
+      "scrolls_comentarios": 2,
+      "candidatos_comentarios": [
+        "Javier Milei",
+        "Axel Kicillof",
+        "Sergio Massa",
+        "Patricia Bullrich",
+        "Cristina Fernández de Kirchner"
+      ]
+    }
+  },
   "candidatos": null,
-  "scrolls_por_candidato": 3,
   "espera_entre_scrolls": [2, 5],
   "espera_entre_candidatos": [20, 40],
   "viewport": [950, 1300],

@@ -42,3 +42,14 @@ def test_dedup_sin_identidad_no_colapsa():
 
 def test_dedup_lista_vacia():
     assert dedup.dedup_posts([]) == []
+
+
+def test_mismo_autor_y_texto_en_redes_distintas_no_colapsa():
+    a = {"autor": "@user", "texto": "Vamos Milei", "red": "twitter"}
+    b = {"autor": "@user", "texto": "Vamos Milei", "red": "tiktok"}
+    assert len(dedup.dedup_posts([a, b])) == 2
+
+
+def test_duplicado_en_la_misma_red_si_colapsa():
+    a = {"autor": "@user", "texto": "Vamos Milei", "red": "tiktok"}
+    assert dedup.dedup_posts([a, dict(a)]) == [a]
