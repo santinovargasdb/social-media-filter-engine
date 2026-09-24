@@ -4,6 +4,6 @@
         -> list[{"ruta": Path, "contexto": str}]     (SesionInvalidaError si muere)
     LOGIN_URL / login_completado(url)                (los usa accounts.py)
 """
-from . import twitter
+from . import tiktok, twitter
 
-POR_NOMBRE = {"twitter": twitter}
+POR_NOMBRE = {"twitter": twitter, "tiktok": tiktok}
