@@ -21,6 +21,7 @@ import random
 import sys
 import time
 import urllib.parse
+from contextlib import contextmanager
 from pathlib import Path
 
 X_SEARCH_URL = "https://x.com/search?q={q}&src=typed_query&f=live"
@@ -58,6 +59,41 @@ def capturar_pagina(page, scrolls: int, esperas, carpeta: Path, prefijo: str) ->
             page.evaluate("window.scrollBy(0, window.innerHeight * 0.9)")
             esperar_aleatorio(esperas)
     return rutas
+
+
+def capturar_elemento(page, selector: str, scrolls: int, esperas,
+                      carpeta: Path, prefijo: str) -> list[Path]:
+    """Como capturar_pagina, pero screenshotea y scrollea UN elemento (ej. el panel
+    de comentarios de un video), no la ventana."""
+    carpeta.mkdir(parents=True, exist_ok=True)
+    rutas: list[Path] = []
+    for n in range(scrolls):
+        ruta = carpeta / f"{prefijo}-{n + 1}.png"
+        page.locator(selector).first.screenshot(path=str(ruta))
+        rutas.append(ruta)
+        if n + 1 < scrolls:
+            page.eval_on_selector(selector, "el => el.scrollBy(0, el.clientHeight * 0.9)")
+            esperar_aleatorio(esperas)
+    return rutas
+
+
+@contextmanager
+def pagina_con_sesion(sesion: Path, viewport, headless: bool):
+    """Abre Chromium con la sesión (storage_state) de una cuenta y entrega un Page.
+    Cierra el navegador al salir. Mismo flag anti-detección que el login: con
+    navigator.webdriver=true las redes interponen challenges que acá se leerían
+    como cuenta quemada."""
+    from playwright.sync_api import sync_playwright  # diferido
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(
+            headless=headless, args=["--disable-blink-features=AutomationControlled"])
+        context = navegador.new_context(
+            storage_state=str(sesion),
+            viewport={"width": viewport[0], "height": viewport[1]})
+        try:
+            yield context.new_page()
+        finally:
+            navegador.close()
 
 
 def capturar_busqueda(sesion: Path, termino: str, scrolls: int = 3,

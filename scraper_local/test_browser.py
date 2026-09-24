@@ -53,3 +53,47 @@ def test_esperar_aleatorio_dentro_del_rango(monkeypatch):
 
 def test_sesion_invalida_es_exception():
     assert issubclass(browser.SesionInvalidaError, Exception)
+
+
+class FakeLocator:
+    def __init__(self, page):
+        self.page = page
+        self.first = self
+
+    def screenshot(self, path):
+        Path(path).write_bytes(b"png-elemento")
+
+
+class FakePageConElemento(FakePage):
+    def __init__(self):
+        super().__init__()
+        self.selectores_evaluados = []
+
+    def locator(self, selector):
+        return FakeLocator(self)
+
+    def eval_on_selector(self, selector, script):
+        self.selectores_evaluados.append((selector, script))
+
+
+def test_capturar_elemento_screenshotea_y_scrollea_el_elemento(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "esperar_aleatorio", lambda rango: None)
+    page = FakePageConElemento()
+    rutas = browser.capturar_elemento(page, "#comentarios", scrolls=3, esperas=(0, 0),
+                                      carpeta=tmp_path / "caps", prefijo="milei-comentarios-1")
+    assert [r.name for r in rutas] == ["milei-comentarios-1-1.png",
+                                       "milei-comentarios-1-2.png",
+                                       "milei-comentarios-1-3.png"]
+    assert all(r.read_bytes() == b"png-elemento" for r in rutas)
+    # Scrollea el ELEMENTO entre capturas: n-1 scrolls.
+    assert len(page.selectores_evaluados) == 2
+    sel, script = page.selectores_evaluados[0]
+    assert sel == "#comentarios" and "scrollBy" in script and "clientHeight" in script
+
+
+def test_capturar_elemento_un_scroll_no_scrollea(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "esperar_aleatorio", lambda rango: None)
+    page = FakePageConElemento()
+    rutas = browser.capturar_elemento(page, "#c", scrolls=1, esperas=(0, 0),
+                                      carpeta=tmp_path, prefijo="uno")
+    assert len(rutas) == 1 and page.selectores_evaluados == []
