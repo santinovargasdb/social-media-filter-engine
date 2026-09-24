@@ -16,13 +16,6 @@ class FakePage:
         self.scrolls.append(script)
 
 
-def test_url_busqueda_encodea_termino_y_lang():
-    url = browser.url_busqueda("Javier Milei")
-    assert url.startswith("https://x.com/search?q=")
-    assert "Javier%20Milei%20lang%3Aes" in url
-    assert "f=live" in url
-
-
 def test_capturar_pagina_saca_n_capturas_y_scrollea_entre_medio(tmp_path, monkeypatch):
     monkeypatch.setattr(browser, "esperar_aleatorio", lambda rango: None)
     page = FakePage()

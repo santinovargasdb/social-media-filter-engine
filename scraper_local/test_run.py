@@ -4,6 +4,7 @@ from pathlib import Path
 
 import run
 import browser as browser_mod
+from redes import twitter
 
 
 POST_MILEI = {"texto": "Gran discurso de Milei", "autor": "@fan", "fecha": "2 h",
@@ -68,16 +69,16 @@ def test_capturar_candidato_rota_ante_sesion_invalida(tmp_path, monkeypatch):
         {"alias": "viva", "estado": "activa", "ultima_vez": "2026-09-01T00:00:00+00:00", "notas": ""},
     ]}
     usadas = []
-    def fake_capturar(sesion, termino, **kw):
+    def fake_capturar(sesion, termino, cfg, cfg_red, carpeta, prefijo, warnings):
         usadas.append(sesion.name)
         if sesion.name == "muerta.json":
             raise browser_mod.SesionInvalidaError("challenge")
-        return [tmp_path / "cap-1.png"]
-    monkeypatch.setattr(run.browser, "capturar_busqueda", fake_capturar)
+        return [{"ruta": tmp_path / "cap-1.png", "contexto": ""}]
+    monkeypatch.setattr(twitter, "capturar", fake_capturar)
     warnings = []
-    rutas = run.capturar_candidato(_cfg(), pool, "Javier Milei", tmp_path, warnings)
+    capturas = run.capturar_candidato(_cfg(), pool, "Javier Milei", tmp_path, warnings)
     assert usadas == ["muerta.json", "viva.json"]
-    assert len(rutas) == 1
+    assert len(capturas) == 1
     assert pool["cuentas"][0]["estado"] == "quemada"
     assert any("quemada" in w for w in warnings)
 
@@ -94,8 +95,10 @@ def _preparar_correr(monkeypatch, tmp_path, posts_por_captura, escritos):
     monkeypatch.setattr(run.accounts, "cargar_pool", lambda ruta=None: pool)
     monkeypatch.setattr(run.accounts, "guardar_pool", lambda p, ruta=None: None)
     monkeypatch.setattr(run, "capturar_candidato",
-                        lambda cfg, pool, cand, carpeta, warnings: [tmp_path / f"{cand}.png"])
-    monkeypatch.setattr(run.vision, "read_capture", lambda ruta, red, candidatos=None: posts_por_captura)
+                        lambda cfg, pool, cand, carpeta, warnings: [
+                            {"ruta": tmp_path / f"{cand}.png", "contexto": ""}])
+    monkeypatch.setattr(run.vision, "read_capture",
+                        lambda ruta, red, candidatos=None, contexto="": posts_por_captura)
     monkeypatch.setattr(run.store, "write_snapshot",
                         lambda payload, generado_en: escritos.append(payload) or True)
     monkeypatch.setattr(run.browser, "esperar_aleatorio", lambda rango: None)
@@ -151,12 +154,12 @@ def test_capturar_candidato_error_inesperado_no_quema_ni_aborta(tmp_path, monkey
     """Un crash de Playwright (no SesionInvalidaError) devuelve [] con warning,
     sin marcar la cuenta como quemada."""
     pool = {"cuentas": [{"alias": "a", "estado": "activa", "ultima_vez": "", "notas": ""}]}
-    def explota(sesion, termino, **kw):
+    def explota(sesion, termino, cfg, cfg_red, carpeta, prefijo, warnings):
         raise RuntimeError("chromium se murió")
-    monkeypatch.setattr(run.browser, "capturar_busqueda", explota)
+    monkeypatch.setattr(twitter, "capturar", explota)
     warnings = []
-    rutas = run.capturar_candidato(_cfg(), pool, "Javier Milei", tmp_path, warnings)
-    assert rutas == []
+    capturas = run.capturar_candidato(_cfg(), pool, "Javier Milei", tmp_path, warnings)
+    assert capturas == []
     assert pool["cuentas"][0]["estado"] == "activa"  # NO quemada
     assert any("error del navegador" in w for w in warnings)
 
@@ -167,6 +170,6 @@ def test_correr_pasa_candidatos_a_vision(monkeypatch, tmp_path):
     _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
     vistos = []
     monkeypatch.setattr(run.vision, "read_capture",
-                        lambda ruta, red, candidatos=None: vistos.append(candidatos) or [POST_MILEI])
+                        lambda ruta, red, candidatos=None, contexto="": vistos.append(candidatos) or [POST_MILEI])
     run.correr(_cfg(candidatos=["Solo Uno"]), dry_run=False)
     assert vistos and vistos[0] == ["Solo Uno"]

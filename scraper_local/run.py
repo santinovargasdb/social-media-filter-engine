@@ -31,6 +31,7 @@ if BACKEND_DIR not in sys.path:
 import accounts  # noqa: E402
 import browser  # noqa: E402
 import dedup  # noqa: E402
+import redes  # noqa: E402
 import vision  # noqa: E402
 import electoral  # noqa: E402
 import store  # noqa: E402
@@ -116,7 +117,7 @@ def armar_payload(bloque: dict, warnings: list[str]) -> dict:
 
 
 def capturar_candidato(cfg: dict, pool: dict, candidato: str, carpeta: Path,
-                       warnings: list[str]) -> list[Path]:
+                       warnings: list[str]) -> list[dict]:
     """Capturas de UN candidato, rotando la cuenta UNA vez si se quema.
     Devuelve [] si no se pudo (el resto de la corrida sigue)."""
     for _intento in range(2):  # cuenta actual + una rotación
@@ -125,13 +126,12 @@ def capturar_candidato(cfg: dict, pool: dict, candidato: str, carpeta: Path,
             warnings.append(f"Sin cuentas activas: '{candidato}' quedó sin capturar.")
             return []
         try:
-            rutas = browser.capturar_busqueda(
+            capturas = redes.POR_NOMBRE["twitter"].capturar(
                 sesion=accounts.ruta_sesion(cuenta["alias"]), termino=candidato,
-                scrolls=cfg["scrolls_por_candidato"], viewport=tuple(cfg["viewport"]),
-                headless=cfg["headless"], esperas=tuple(cfg["espera_entre_scrolls"]),
-                carpeta=carpeta, prefijo=_slug(candidato))
+                cfg=cfg, cfg_red={"scrolls_por_candidato": cfg["scrolls_por_candidato"]},
+                carpeta=carpeta, prefijo=_slug(candidato), warnings=warnings)
             accounts.registrar_uso(pool, cuenta["alias"])
-            return rutas
+            return capturas
         except browser.SesionInvalidaError as e:
             log.warning("Cuenta '%s' quemada/challenge: %s", cuenta["alias"], e)
             accounts.marcar_quemada(pool, cuenta["alias"])
@@ -167,15 +167,15 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
     errores = 0
     for i, candidato in enumerate(candidatos):
         log.info("Candidato %d/%d: %s", i + 1, len(candidatos), candidato)
-        rutas = capturar_candidato(cfg, pool, candidato, carpeta, warnings)
-        for ruta in rutas:
-            leidos = vision.read_capture(ruta, red, candidatos)
+        capturas = capturar_candidato(cfg, pool, candidato, carpeta, warnings)
+        for cap in capturas:
+            leidos = vision.read_capture(cap["ruta"], red, candidatos, contexto=cap["contexto"])
             if leidos is None:
                 errores += 1
-                warnings.append(f"Lectura fallida (Gemini) de {ruta.name}.")
+                warnings.append(f"Lectura fallida (Gemini) de {cap['ruta'].name}.")
                 continue
             posts_crudos.extend(leidos)
-        if i + 1 < len(candidatos) and rutas:
+        if i + 1 < len(candidatos) and capturas:
             browser.esperar_aleatorio(tuple(cfg["espera_entre_candidatos"]))
     accounts.guardar_pool(pool)
 
