@@ -71,7 +71,11 @@ def filtrar_redes(cfg: dict, redes_csv: str | None) -> dict:
         pedidas = {r.strip() for r in redes_csv.split(",") if r.strip()}
         cfg["redes"] = {k: v for k, v in cfg["redes"].items() if k in pedidas}
     if not cfg["redes"]:
-        sys.exit(f"--redes '{redes_csv}': ninguna red del config coincide.")
+        msg = (
+            "config sin redes activas." if redes_csv is None
+            else f"--redes '{redes_csv}': ninguna red del config coincide."
+        )
+        sys.exit(msg)
     return cfg
 
 
