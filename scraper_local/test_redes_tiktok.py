@@ -9,7 +9,7 @@ def test_registro_incluye_tiktok():
 
 def test_url_busqueda_encodea_el_termino():
     url = tiktok.url_busqueda("Javier Milei")
-    assert url == "https://www.tiktok.com/search?q=Javier%20Milei"
+    assert url == "https://www.tiktok.com/search/video?q=Javier%20Milei"
 
 
 def test_login_completado_fuera_de_login_y_signup():

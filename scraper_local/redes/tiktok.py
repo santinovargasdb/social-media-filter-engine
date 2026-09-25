@@ -13,10 +13,11 @@ from pathlib import Path
 
 import browser
 
-TIKTOK_SEARCH_URL = "https://www.tiktok.com/search?q={q}"
+TIKTOK_FYP_URL = "https://www.tiktok.com/foryou"
 LOGIN_URL = "https://www.tiktok.com/login"
-# TUNEAR: DOM real de TikTok en la PC de la oficina (data-e2e suele ser lo más estable).
-SELECTOR_RESULTADOS = "[data-e2e='search_top-item']"     # cards de video en la búsqueda
+# Tab "Top" retorna error anti-bot; tab "Vídeos" funciona correctamente.
+SELECTOR_TAB_VIDEOS = "text=Vídeos"
+SELECTOR_RESULTADOS = "[data-e2e='search_video-item']"   # cards en tab Vídeos
 SELECTOR_LINKS_VIDEO = "a[href*='/video/']"              # links a videos dentro de las cards
 SELECTOR_COMENTARIOS = "[data-e2e='comment-list']"       # panel de comentarios del video
 SELECTOR_CAPTCHA = "[id*='captcha'], [class*='captcha']"  # overlay del captcha-puzzle
@@ -30,7 +31,8 @@ def login_completado(url: str) -> bool:
 
 
 def url_busqueda(termino: str) -> str:
-    return TIKTOK_SEARCH_URL.format(q=urllib.parse.quote(termino))
+    """URL de búsqueda directa (referencia; no usar para navegar — usar FYP primero)."""
+    return f"https://www.tiktok.com/search/video?q={urllib.parse.quote(termino)}"
 
 
 def links_de_videos(hrefs: list[str], cantidad: int) -> list[str]:
@@ -79,13 +81,34 @@ def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
     from playwright.sync_api import TimeoutError as PWTimeout  # diferido
     esperas = tuple(cfg["espera_entre_scrolls"])
     with browser.pagina_con_sesion(sesion, tuple(cfg["viewport"]), cfg["headless"]) as page:
-        page.goto(url_busqueda(termino), timeout=browser.TIMEOUT_FEED_MS)
+        # La URL /search directa activa anti-bot ("Hubo un problema").
+        # Flujo correcto: FYP → lupita → tipeo humano → Enter → tab Vídeos.
+        page.goto(TIKTOK_FYP_URL, timeout=browser.TIMEOUT_FEED_MS)
+        browser.esperar_aleatorio((2, 4))
         _verificar_sesion(page)
+        page.locator("[data-e2e='nav-search']").click()
+        browser.esperar_aleatorio((1, 2))
+        page.keyboard.type(termino, delay=80)
+        page.keyboard.press("Enter")
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        # Tab "Top" puede seguir mostrando error anti-bot; "Vídeos" sí devuelve contenido.
+        try:
+            tab = page.locator(SELECTOR_TAB_VIDEOS)
+            if not tab.count():
+                tab = page.locator("text=Videos")
+            if tab.count():
+                tab.first.click()
+                browser.esperar_aleatorio((2, 3))
+        except Exception:
+            pass
         try:
             page.wait_for_selector(SELECTOR_RESULTADOS, timeout=browser.TIMEOUT_FEED_MS)
         except PWTimeout:
             raise browser.SesionInvalidaError(
-                "los resultados no aparecieron (¿captcha o sesión vencida?)")
+                "los resultados de TikTok no aparecieron (¿captcha o sesión vencida?)")
         browser.esperar_aleatorio(esperas)
         capturas = [{"ruta": r, "contexto": ""} for r in browser.capturar_pagina(
             page, cfg_red["scrolls_por_candidato"], esperas, carpeta, prefijo)]
