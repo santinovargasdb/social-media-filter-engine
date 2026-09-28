@@ -18,6 +18,7 @@ SELECTOR_SEARCH_INPUT = "input[placeholder*='Buscar']"   # input del sidebar   #
 SELECTOR_TAB_POSTS    = "text=Posts"                     # pestaña de Posts    # TUNEAR
 SELECTOR_POST_GRID    = "article"                        # grid de resultados  # TUNEAR
 SELECTOR_POST_LINKS   = "a[href*='/p/']"                 # links a posts /p/   # TUNEAR
+SELECTOR_CHALLENGE    = "[data-testid*='challenge'], [class*='challenge']"  # TUNEAR
 MARCAS_SESION_MUERTA  = ("/accounts/login/", "/challenge/")
 
 
@@ -52,6 +53,7 @@ def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
             page.wait_for_load_state("networkidle", timeout=10000)
         except Exception:
             pass
+        browser.esperar_aleatorio((2, 4))
         _verificar_sesion(page)
 
         # Sidebar search → tipeo humano → pestaña Posts
