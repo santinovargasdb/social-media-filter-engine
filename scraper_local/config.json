@@ -12,6 +12,17 @@
         "Patricia Bullrich",
         "Cristina Fernández de Kirchner"
       ]
+    },
+    "instagram": {
+      "scrolls_por_candidato": 1,
+      "posts_por_candidato": 3,
+      "candidatos_posts": [
+        "Javier Milei",
+        "Axel Kicillof",
+        "Sergio Massa",
+        "Patricia Bullrich",
+        "Cristina Fernández de Kirchner"
+      ]
     }
   },
   "candidatos": null,

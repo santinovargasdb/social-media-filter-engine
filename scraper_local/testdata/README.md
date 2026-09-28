@@ -71,3 +71,47 @@ backend\.venv\Scripts\python.exe scraper_local\vision.py scraper_local\testdata\
 Criterio de aprobación: los 3 cards de la tabla extraídos con autor y postura;
 cero cards prohibidos. Si Gemini falla una postura, ajustar el PROMPT en
 `vision.py` y re-correr.
+
+---
+
+## Instagram falso (`ig_grilla_falsa.html` y `ig_post_falso.html`)
+
+`ig_grilla_falsa.html` simula la grilla de resultados de Instagram con **3 posts**
+(`href` con `/p/`) y **1 perfil** (sin `/p/` — debe ser filtrado por `links_de_posts`).
+
+`ig_post_falso.html` simula un post individual con caption y 3 comentarios.
+
+### Dry-run de la maquinaria de captura
+
+```powershell
+Set-Location "C:\Users\accsoc\Desktop\Github Clone\Filtro-RedesSocialesSMT"
+scraper_local\.venv\Scripts\python.exe scraper_local\browser.py `
+  --url "C:\Users\accsoc\Desktop\Github Clone\Filtro-RedesSocialesSMT\scraper_local\testdata\ig_grilla_falsa.html" `
+  --scrolls 2 --visible
+```
+
+### Smoke de visión sobre el post falso
+
+Screenshotear `ig_post_falso.html` con Playwright o un navegador (ancho ~600px,
+full-page), guardar como `ig_post_falso.png` y correr:
+
+```powershell
+Get-Content backend\.env | ForEach-Object {
+  if ($_ -match '^([^=#]+)=(.*)$') { Set-Item "env:$($matches[1].Trim())" $matches[2].Trim() } }
+$env:VISION_MIN_INTERVAL = "0"
+backend\.venv\Scripts\python.exe scraper_local\vision.py `
+  scraper_local\testdata\ig_post_falso.png --red instagram
+```
+
+### Resultados esperados (ig_post_falso.html)
+
+| # | autor | es_electoral | candidatos (postura) |
+|---|-------|--------------|----------------------|
+| 1 | @LibertyFanPageIG (caption) | true | Javier Milei (a_favor) |
+| 2 | @PatriotaArgentino | true | Javier Milei (a_favor) |
+| 3 | @KirchneristaFiel | true | Javier Milei (en_contra) |
+| 4 | @ObservadorNeutral | true | Javier Milei (neutro) |
+
+Criterio: la caption y los comentarios se tratan como publicaciones separadas;
+cero posts de UI (botones, headers). Si Gemini falla una postura, ajustar el
+PROMPT en `vision.py`, no `REGLAS_CANDIDATOS`.
