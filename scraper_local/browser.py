@@ -71,7 +71,8 @@ def pagina_con_sesion(sesion: Path, viewport, headless: bool):
             headless=headless, args=["--disable-blink-features=AutomationControlled"])
         context = navegador.new_context(
             storage_state=str(sesion),
-            viewport={"width": viewport[0], "height": viewport[1]})
+            viewport={"width": viewport[0], "height": viewport[1]},
+            permissions=["notifications"])  # evita el popup "Activar notificaciones"
         try:
             yield context.new_page()
         finally:

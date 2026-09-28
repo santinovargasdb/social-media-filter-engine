@@ -11,15 +11,21 @@ from pathlib import Path
 import browser
 
 IG_HOME_URL = "https://www.instagram.com/"
-LOGIN_URL = "https://www.instagram.com/accounts/login/"
+LOGIN_URL   = "https://www.instagram.com/accounts/login/"
 
-SELECTOR_SEARCH_ICON  = "[aria-label='Buscar']"          # icono lupa sidebar  # TUNEAR
-SELECTOR_SEARCH_INPUT = "input[placeholder*='Buscar']"   # input del sidebar   # TUNEAR
-SELECTOR_TAB_POSTS    = "text=Posts"                     # pestaña de Posts    # TUNEAR
-SELECTOR_POST_GRID    = "article"                        # grid de resultados  # TUNEAR
-SELECTOR_POST_LINKS   = "a[href*='/p/']"                 # links a posts /p/   # TUNEAR
-SELECTOR_CHALLENGE    = "[data-testid*='challenge'], [class*='challenge']"  # TUNEAR
-MARCAS_SESION_MUERTA  = ("/accounts/login/", "/challenge/")
+SELECTOR_POST_LINKS = "a[href*='/p/']"   # links a posts en grilla de hashtag # TUNEAR
+SELECTOR_CHALLENGE  = "[data-testid*='challenge'], [class*='challenge']"
+MARCAS_SESION_MUERTA = ("/accounts/login/", "/challenge/")
+
+# Hashtags por defecto para cada candidato. Sobreescribibles en config.json
+# → instagram.hashtags_candidatos: {"Nombre": "hashtag_sin_numeral"}
+HASHTAGS_CANDIDATOS: dict[str, str] = {
+    "Javier Milei":                   "javierMilei",
+    "Axel Kicillof":                  "kicillof",
+    "Sergio Massa":                   "sergiomassa",
+    "Patricia Bullrich":              "bullrich",
+    "Cristina Fernández de Kirchner": "cfk",
+}
 
 
 def login_completado(url: str) -> bool:
@@ -43,6 +49,15 @@ def links_de_posts(hrefs: list[str], cantidad: int) -> list[str]:
     return out
 
 
+def _hashtag_para(termino: str, cfg_red: dict) -> str:
+    """Hashtag de Instagram para el término dado (sin #). cfg_red sobreescribe defaults."""
+    mapping = dict(HASHTAGS_CANDIDATOS)
+    mapping.update(cfg_red.get("hashtags_candidatos") or {})
+    if termino in mapping:
+        return mapping[termino]
+    return "".join(c for c in termino.replace(" ", "") if c.isalnum())
+
+
 def _verificar_sesion(page) -> None:
     if any(marca in page.url for marca in MARCAS_SESION_MUERTA):
         raise browser.SesionInvalidaError(f"redirigido a {page.url}")
@@ -52,8 +67,11 @@ def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
              carpeta: Path, prefijo: str, warnings: list[str]) -> list[dict]:
     from playwright.sync_api import TimeoutError as PWTimeout  # diferido
     esperas = tuple(cfg["espera_entre_scrolls"])
+    hashtag = _hashtag_para(termino, cfg_red)
+    tag_url = f"https://www.instagram.com/explore/tags/{hashtag}/"
+
     with browser.pagina_con_sesion(sesion, tuple(cfg["viewport"]), cfg["headless"]) as page:
-        page.goto(IG_HOME_URL, timeout=browser.TIMEOUT_FEED_MS)
+        page.goto(tag_url, timeout=browser.TIMEOUT_FEED_MS)
         try:
             page.wait_for_load_state("networkidle", timeout=10000)
         except Exception:
@@ -61,26 +79,15 @@ def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
         browser.esperar_aleatorio((2, 4))
         _verificar_sesion(page)
 
-        # Sidebar search → tipeo humano → pestaña Posts
-        page.locator(SELECTOR_SEARCH_ICON).first.click()
-        browser.esperar_aleatorio((1, 2))
-        page.locator(SELECTOR_SEARCH_INPUT).fill("")
-        page.keyboard.type(termino, delay=80)
-        browser.esperar_aleatorio((1, 2))
+        # Esperar a que aparezcan links de posts en la grilla del hashtag
         try:
-            page.locator(SELECTOR_TAB_POSTS).first.click()
-            browser.esperar_aleatorio((2, 3))
-        except Exception:
-            pass
-
-        try:
-            page.wait_for_selector(SELECTOR_POST_GRID, timeout=browser.TIMEOUT_FEED_MS)
+            page.wait_for_selector(SELECTOR_POST_LINKS, timeout=browser.TIMEOUT_FEED_MS)
         except PWTimeout:
             warnings.append(
-                f"[instagram] Grilla no apareció para '{termino}' (¿sin resultados?).")
+                f"[instagram] Sin posts para '#{hashtag}' (¿hashtag inexistente?).")
             return []
 
-        # Scroll para exponer más links antes de extraer
+        # Scroll para exponer más posts antes de extraer
         for _ in range(cfg_red.get("scrolls_por_candidato", 1)):
             page.evaluate("window.scrollBy(0, window.innerHeight * 0.9)")
             browser.esperar_aleatorio(esperas)
