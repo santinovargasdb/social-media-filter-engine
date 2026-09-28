@@ -85,7 +85,7 @@ def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
             return []  # candidato no puntero: sin Gemini para IG
 
         posts_por_candidato = cfg_red.get("posts_por_candidato", 3)
-        post_links = links_de_posts(hrefs, posts_por_candidato * 2)[:posts_por_candidato]
+        post_links = links_de_posts(hrefs, posts_por_candidato)
         capturas = []
         for i, link in enumerate(post_links):
             try:
