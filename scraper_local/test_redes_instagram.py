@@ -13,6 +13,7 @@ def test_login_completado_fuera_de_login_y_challenge():
     assert instagram.login_completado("https://www.instagram.com/explore/") is True
     assert instagram.login_completado("https://www.instagram.com/accounts/login/") is False
     assert instagram.login_completado("https://www.instagram.com/accounts/login/?next=/") is False
+    assert instagram.login_completado("https://www.instagram.com/accounts/onetap/?next=/") is False
     assert instagram.login_completado("https://www.instagram.com/challenge/") is False
     assert instagram.login_completado("https://www.instagram.com/challenge/action/") is False
 

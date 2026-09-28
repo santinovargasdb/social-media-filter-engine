@@ -110,6 +110,26 @@ def _login(alias: str, red: str) -> int:
             except Exception:
                 pass
             return 1
+        # Espera extra: primero networkidle, después polling activo de cookies clave.
+        # Instagram setea sessionid via JS después del redirect; 3s fijo no alcanza.
+        try:
+            page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+        # Intentar detectar cookie de sesión hasta 20 s; si no aparece, pedir
+        # confirmación manual (evita guardar una sesión incompleta).
+        _cookie_session_names = {"sessionid", "auth_token", "user_session"}  # IG / TT / TW
+        for _ in range(40):
+            state_check = context.storage_state()
+            nombres = {c["name"] for c in state_check.get("cookies", [])}
+            if nombres & _cookie_session_names:
+                break
+            page.wait_for_timeout(500)
+        else:
+            print("No se detectó cookie de sesión en 20 s. "
+                  "Asegurate de estar en el feed antes de presionar Enter.")
+            input("Presioná Enter cuando el home feed esté visible → ")
+        page.wait_for_timeout(1000)
         context.storage_state(path=str(ruta_sesion(alias, red)))
         browser.close()
     for c in pool["cuentas"]:

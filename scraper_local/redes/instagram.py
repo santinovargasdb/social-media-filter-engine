@@ -23,8 +23,13 @@ MARCAS_SESION_MUERTA  = ("/accounts/login/", "/challenge/")
 
 
 def login_completado(url: str) -> bool:
-    """IG sale de /accounts/login/ y /challenge/ al terminar el login manual."""
-    return "/accounts/login/" not in url and "/challenge/" not in url
+    """True solo cuando el home feed está cargado. Excluye cualquier path
+    /accounts/ (login, onetap, email-confirmation, etc.) y /challenge/."""
+    return (
+        "instagram.com" in url
+        and "/accounts/" not in url
+        and "/challenge/" not in url
+    )
 
 
 def links_de_posts(hrefs: list[str], cantidad: int) -> list[str]:
