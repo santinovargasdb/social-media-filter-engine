@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Instagram Búsqueda Falsa — Milei</title>
+  <style>
+    body { margin: 0; background: #fafafa; font-family: -apple-system, sans-serif; }
+    header { border-bottom: 1px solid #eee; padding: 10px 20px; }
+    nav { padding: 6px 20px; }
+    nav a { margin-right: 12px; text-decoration: none; color: #333; font-size: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px;
+            max-width: 600px; margin: 12px auto; }
+    .cell { aspect-ratio: 1; background: #ccc; position: relative; }
+    .cell a { display: block; width: 100%; height: 100%; }
+    .cell span { position: absolute; bottom: 6px; left: 6px; font-size: 11px;
+                 background: rgba(0,0,0,.5); color: white; padding: 2px 4px; }
+  </style>
+</head>
+<body>
+  <header><strong>Instagram</strong> &nbsp; Resultados para: "Milei"</header>
+  <nav>
+    <a href="/milei/">Cuentas</a>
+    <a href="#posts" id="tab-posts">Posts</a>
+  </nav>
+  <article class="grid">
+    <!-- 3 posts válidos (href contiene /p/) -->
+    <div class="cell" style="background:#a8d8a8">
+      <a href="https://www.instagram.com/p/AAA111/"><span>@LibertyFanPageIG — Viva la libertad carajo #Milei</span></a>
+    </div>
+    <div class="cell" style="background:#f4a261">
+      <a href="https://www.instagram.com/p/BBB222/"><span>@AnalisisElectoralIG — Milei sube en encuestas</span></a>
+    </div>
+    <div class="cell" style="background:#e9c46a">
+      <a href="https://www.instagram.com/p/CCC333/"><span>@DataPolitica2026 — Milei vs Kicillof hoy</span></a>
+    </div>
+    <!-- 1 enlace de perfil (sin /p/ — debe ser filtrado por links_de_posts) -->
+    <div class="cell" style="background:#bbb">
+      <a href="https://www.instagram.com/milfanpage_oficial/"><span>Perfil (no es post)</span></a>
+    </div>
+  </article>
+</body>
+</html>
