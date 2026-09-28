@@ -86,6 +86,8 @@ def _author_url(autor: str, red: str) -> str:
         return f"https://x.com/{autor[1:]}"
     if red == "tiktok":
         return f"https://www.tiktok.com/{autor}"
+    if red == "instagram":
+        return f"https://www.instagram.com/{autor[1:]}/"
     return ""
 
 

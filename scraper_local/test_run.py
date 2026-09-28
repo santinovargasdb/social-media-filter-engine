@@ -233,3 +233,42 @@ def test_correr_multi_red_arma_un_bloque_por_red(monkeypatch, tmp_path):
     assert rc == 0 and len(escritos) == 1
     assert [b["red"] for b in escritos[0]["meta"]["bloques"]] == ["twitter", "tiktok"]
     assert escritos[0]["candidatos"][0]["por_red"] == {"twitter": 1, "tiktok": 1}
+
+
+# --- Instagram ---
+
+POST_INSTAGRAM = {
+    "texto": "Milei imparable en Instagram", "autor": "@fan.ig", "fecha": "2 d",
+    "red": "instagram", "es_electoral": True,
+    "candidatos": [{"nombre": "Javier Milei", "postura": "a_favor", "confianza": 0.85}],
+    "cita": "imparable"
+}
+
+
+def test_author_url_instagram():
+    assert run._author_url("@fan.ig", "instagram") == "https://www.instagram.com/fan.ig/"
+    assert run._author_url("Nombre Visible", "instagram") == ""
+
+
+def test_correr_multi_red_tres_bloques(monkeypatch, tmp_path):
+    escritos = []
+    _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
+    monkeypatch.setattr(
+        run.vision, "read_capture",
+        lambda ruta, red, candidatos=None, contexto="": {
+            "twitter": [POST_MILEI],
+            "tiktok": [POST_TIKTOK],
+            "instagram": [POST_INSTAGRAM],
+        }.get(red, []))
+    cfg = _cfg(candidatos=["Javier Milei"])
+    cfg["redes"] = {
+        "twitter": {"scrolls_por_candidato": 3},
+        "tiktok": {"scrolls_por_candidato": 3, "videos_comentarios": 2,
+                   "scrolls_comentarios": 2, "candidatos_comentarios": []},
+        "instagram": {"scrolls_por_candidato": 1, "posts_por_candidato": 3,
+                      "candidatos_posts": []},
+    }
+    rc = run.correr(cfg, dry_run=False)
+    assert rc == 0 and len(escritos) == 1
+    assert [b["red"] for b in escritos[0]["meta"]["bloques"]] == ["twitter", "tiktok", "instagram"]
+    assert escritos[0]["candidatos"][0]["por_red"] == {"twitter": 1, "tiktok": 1, "instagram": 1}
