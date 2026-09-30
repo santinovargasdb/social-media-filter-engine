@@ -13,8 +13,8 @@ Diseño completo: `docs/superpowers/specs/2026-09-21-scraper-local-vision-design
 - ✅ **Fase 3:** el scraper de X (`accounts.py` + `browser.py` + `dedup.py` + `run.py`).
   **En producción desde 2026-09-23**: corre en la PC de la oficina vía Task
   Scheduler (tarea "SMATA Boca de Urna - Scraper", 10:00 y 16:00).
-- ✅ **Fase 4a:** TikTok (`redes/tiktok.py`) — búsqueda + comentarios top de punteros.
-- ⏳ **Fase 4b:** Instagram.
+- ✅ **Fase 4a:** TikTok (`redes/tiktok.py`) — búsqueda + comentarios top de punteros. **Corre VISIBLE** (en headless TikTok mete captcha-slider; ver nota abajo).
+- ✅ **Fase 4b:** Instagram (`redes/instagram.py`) — navega directo a `/explore/tags/<hashtag>/`. En producción desde 2026-09-28.
 
 ## 1) Crear la tabla en Supabase
 En el proyecto de Supabase → **SQL Editor** → correr:
@@ -152,18 +152,64 @@ SOLO si la política de la máquina bloquea scripts locales (con RemoteSigned no
 
 | Hora | Nombre de tarea | Comando |
 |------|-----------------|---------|
-| 10:00 | SMATA Boca de Urna - Twitter | `powershell -NoProfile -File "<ruta>\scraper_local\run.ps1" -Redes twitter` |
-| 16:00 | SMATA Boca de Urna - Twitter+TikTok | `powershell -NoProfile -File "<ruta>\scraper_local\run.ps1" -Redes twitter,tiktok` |
+| 10:00 | SMATA Boca de Urna - Twitter (10h) | `powershell -NoProfile -File "<ruta>\scraper_local\run.ps1" -Redes twitter` |
+| 16:00 | SMATA Boca de Urna - Twitter+TikTok (16h) | `powershell -NoProfile -File "<ruta>\scraper_local\run.ps1" -Redes twitter,tiktok,instagram` |
 
 Config editable en `config.json` (scrolls, esperas, candidatos, mínimo de posts para subir).
+
+> [!warning] TikTok corre con browser VISIBLE
+> En headless TikTok sirve un captcha-slider ("Drag the slider to fit the puzzle")
+> en `/search/video` y la búsqueda da 0 resultados (verificado en vivo 2026-09-30:
+> visible → 12 resultados, headless → captcha). Por eso `tiktok._resolver_headless()`
+> lo fuerza a **visible** aunque el `headless` global esté en `true` (Twitter/Instagram
+> sí toleran headless). Consecuencias operativas: **(1)** durante la fase de TikTok en
+> la corrida de las 16h **aparece una ventana de Chrome** en la pantalla — es esperado;
+> **(2)** las tareas deben ser `LogonType Interactive` (correr con el usuario logueado),
+> porque headed necesita un escritorio real. En sesión 0 (sin escritorio) TikTok volvería
+> a fallar con captcha.
+
+## Mantenimiento de cuentas (RECURRENTE)
+
+Las cuentas descartables **se queman periódicamente**: la IP fija de la oficina sin
+proxies hace que X/TikTok/Instagram terminen metiendo challenge. Cuando eso pasa, esa
+red deja de aportar posts y el snapshot se degrada (medido 2026-09-30: las 4 cuentas de
+Twitter+TikTok quemadas → el snapshot quedó sostenido solo por Instagram).
+
+**Revisar el estado del pool** (ideal: cada tanto, o si el snapshot trae menos de lo
+habitual):
+
+```powershell
+.venv\Scripts\python accounts.py estado --red twitter
+.venv\Scripts\python accounts.py estado --red tiktok
+.venv\Scripts\python accounts.py estado --red instagram
+```
+
+**Reponer una cuenta quemada** — re-login manual (marca `activa` sola al terminar):
+
+```powershell
+.venv\Scripts\python accounts.py login <alias> --red <twitter|tiktok|instagram>
+```
+
+- Si al loguear la plataforma no te deja pasar el challenge, esa cuenta ya está
+  suspendida → creá una **cuenta descartable nueva** y logueala (mail + contraseña
+  nativo, NO Google).
+- Reactivar sin re-login (si la sesión sigue siendo válida y el "quemada" fue un falso
+  positivo): setear `"estado": "activa"` en `accounts-<red>.json` (twitter usa
+  `accounts.json`).
+- Diagnosticar si el 0 es por cuentas o por selectores/anti-bot: `run.py --dry-run
+  --redes <red>` con **una** cuenta y mirar los warnings ("quemada/challenge" = cuenta;
+  "resultados no aparecieron" con sesión fresca = selectores/headless).
 
 **Qué tunear allá si algo no anda** (es lo esperable, X y TikTok cambian):
 
 - **Twitter** (`redes/twitter.py`): `SELECTOR_FEED` (hoy `article`),
   `MARCAS_SESION_MUERTA`, `TIMEOUT_FEED_MS`.
-- **TikTok** (`redes/tiktok.py`): `SELECTOR_RESULTADOS` (hoy `[data-e2e='search_top-item']`),
+- **TikTok** (`redes/tiktok.py`): `SELECTOR_RESULTADOS` (hoy `[data-e2e='search_video-item']`,
+  en el tab "Vídeos"; el tab "Top"/"Populares" devuelve error anti-bot),
   `SELECTOR_LINKS_VIDEO` (hoy `a[href*='/video/']`), `SELECTOR_COMENTARIOS`,
   `SELECTOR_CAPTCHA`. Los selectores están marcados `# TUNEAR` en el fuente.
+  Ojo: TikTok ya corre visible (ver warning arriba); si igual da 0 con sesión
+  fresca, es selector, no cuenta.
   Para probarlos sin correr la suite completa:
   ```powershell
   # Un candidato + dry-run: no navega real, imprime lo que haría
