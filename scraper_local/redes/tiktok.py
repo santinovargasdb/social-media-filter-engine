@@ -35,6 +35,20 @@ def url_busqueda(termino: str) -> str:
     return f"https://www.tiktok.com/search/video?q={urllib.parse.quote(termino)}"
 
 
+def _resolver_headless(cfg: dict, cfg_red: dict) -> bool:
+    """headless efectivo para TikTok.
+
+    En modo headless TikTok sirve un captcha-slider ("Drag the slider to fit the
+    puzzle") en la grilla de /search/video y la búsqueda devuelve 0 resultados
+    (verificado en vivo 2026-09-30: visible → 12 resultados, headless → captcha).
+    Por eso TikTok corre VISIBLE por defecto, independientemente del `headless`
+    global (que Twitter/Instagram sí toleran). Se puede forzar con un override
+    explícito `headless` en el bloque `redes.tiktok` del config."""
+    if "headless" in cfg_red:
+        return bool(cfg_red["headless"])
+    return False
+
+
 def links_de_videos(hrefs: list[str], cantidad: int) -> list[str]:
     """Primeros `cantidad` links de video únicos, en orden de aparición (pura)."""
     out: list[str] = []
@@ -80,7 +94,8 @@ def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
              carpeta: Path, prefijo: str, warnings: list[str]) -> list[dict]:
     from playwright.sync_api import TimeoutError as PWTimeout  # diferido
     esperas = tuple(cfg["espera_entre_scrolls"])
-    with browser.pagina_con_sesion(sesion, tuple(cfg["viewport"]), cfg["headless"]) as page:
+    headless = _resolver_headless(cfg, cfg_red)
+    with browser.pagina_con_sesion(sesion, tuple(cfg["viewport"]), headless) as page:
         # La URL /search directa activa anti-bot ("Hubo un problema").
         # Flujo correcto: FYP → lupita → tipeo humano → Enter → tab Vídeos.
         page.goto(TIKTOK_FYP_URL, timeout=browser.TIMEOUT_FEED_MS)

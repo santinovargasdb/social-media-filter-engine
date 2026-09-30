@@ -37,3 +37,16 @@ def test_links_de_videos_filtra_dedupea_y_corta():
 def test_links_de_videos_menos_que_pedidos():
     assert tiktok.links_de_videos(["https://t/@a/video/1"], 5) == ["https://t/@a/video/1"]
     assert tiktok.links_de_videos([], 3) == []
+
+
+def test_resolver_headless_tiktok_visible_por_defecto():
+    # TikTok sirve un captcha-slider a los browsers headless (verificado en vivo),
+    # así que corre VISIBLE aunque el config global esté en headless.
+    assert tiktok._resolver_headless({"headless": True}, {}) is False
+    assert tiktok._resolver_headless({"headless": False}, {}) is False
+
+
+def test_resolver_headless_respeta_override_por_red():
+    # Un override explícito en cfg_red gana (por si TikTok vuelve a tolerar headless).
+    assert tiktok._resolver_headless({"headless": True}, {"headless": True}) is True
+    assert tiktok._resolver_headless({"headless": False}, {"headless": False}) is False
