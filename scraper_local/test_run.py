@@ -250,6 +250,38 @@ def test_author_url_instagram():
     assert run._author_url("Nombre Visible", "instagram") == ""
 
 
+# --- Lock de instancia única ---
+
+def test_lock_impide_segunda_instancia(tmp_path):
+    """Con el lock tomado, un segundo intento sobre el mismo archivo se rechaza."""
+    ruta = tmp_path / ".run.lock"
+    with run.lock_de_instancia(ruta):
+        with pytest.raises(run.InstanciaActivaError):
+            with run.lock_de_instancia(ruta):
+                pass
+
+
+def test_lock_se_libera_al_salir(tmp_path):
+    """Al salir del context (o si el proceso muere) el lock queda libre para otra corrida."""
+    ruta = tmp_path / ".run.lock"
+    with run.lock_de_instancia(ruta):
+        pass
+    with run.lock_de_instancia(ruta):  # no debe lanzar
+        pass
+
+
+def test_main_rechaza_si_ya_hay_corrida(tmp_path, monkeypatch):
+    """main() no corre el scraper y devuelve código != 0 si el lock está tomado."""
+    monkeypatch.setattr(run, "LOCK_PATH", tmp_path / ".run.lock")
+    monkeypatch.setattr(run, "DIR_LOGS", tmp_path / "logs")
+    corrio = []
+    monkeypatch.setattr(run, "correr", lambda cfg, dry_run=False: corrio.append(True) or 0)
+    with run.lock_de_instancia(tmp_path / ".run.lock"):
+        rc = run.main(["--dry-run", "--redes", "twitter"])
+    assert rc != 0
+    assert corrio == []  # nunca ejecutó la corrida
+
+
 def test_correr_multi_red_tres_bloques(monkeypatch, tmp_path):
     escritos = []
     _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)

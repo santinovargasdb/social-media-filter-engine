@@ -15,8 +15,10 @@ Uso:  python run.py [--dry-run] [--config ruta] [--redes twitter,tiktok]
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,8 +40,59 @@ import store  # noqa: E402
 RUTA_CONFIG = BASE_DIR / "config.json"
 DIR_CAPTURAS = BASE_DIR / "capturas"
 DIR_LOGS = BASE_DIR / "logs"
+LOCK_PATH = BASE_DIR / ".run.lock"
 
 log = logging.getLogger("urna.scraper")
+
+
+class InstanciaActivaError(Exception):
+    """Ya hay otra corrida del scraper en curso (el lock está tomado)."""
+
+
+def _tomar_lock_os(fh) -> None:
+    """Lock exclusivo NO bloqueante sobre el file handle; lanza OSError si ya está
+    tomado por otra corrida. El lock lo mantiene el SO y se libera solo cuando el
+    proceso muere (incluso por crash/OOM) — así nunca queda un lock obsoleto."""
+    if os.name == "nt":
+        import msvcrt
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _soltar_lock_os(fh) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
+@contextmanager
+def lock_de_instancia(ruta: Path = LOCK_PATH):
+    """Impide DOS corridas del scraper en paralelo. Corridas simultáneas colisionan
+    de dos formas medidas en prod (2026-09-30): (1) race en `accounts.json` — una
+    marca una cuenta y la otra la re-escribe → "Sin cuentas activas" espurio; (2)
+    RAM — dos Chromium en la PC de 8 GB agotan la memoria y una corrida se cae por
+    OOM. Lanza InstanciaActivaError si ya hay otra activa."""
+    fh = open(ruta, "a+")
+    try:
+        _tomar_lock_os(fh)
+    except OSError as e:
+        fh.close()
+        raise InstanciaActivaError(f"otra corrida activa (lock {ruta})") from e
+    try:
+        yield
+    finally:
+        _soltar_lock_os(fh)
+        fh.close()
 
 CONFIG_DEFAULT = {
     "redes": {"twitter": {"scrolls_por_candidato": 3}},
@@ -250,7 +303,13 @@ def main(argv=None) -> int:
                       encoding="utf-8")])
     cfg = cargar_config(args.config)
     cfg = filtrar_redes(cfg, args.redes)
-    return correr(cfg, dry_run=args.dry_run)
+    try:
+        with lock_de_instancia(LOCK_PATH):
+            return correr(cfg, dry_run=args.dry_run)
+    except InstanciaActivaError as e:
+        log.error("No arranco: %s. Ya hay una corrida en curso; evito colisionar "
+                  "por las cuentas y la RAM.", e)
+        return 2
 
 
 if __name__ == "__main__":

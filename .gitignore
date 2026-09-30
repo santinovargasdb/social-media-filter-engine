@@ -19,3 +19,4 @@ scraper_local/.sesiones/
 scraper_local/capturas/
 scraper_local/logs/
 scraper_local/.venv/
+scraper_local/.run.lock
