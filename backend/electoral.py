@@ -581,6 +581,26 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
                 raise UpstreamUnavailableError(
                     "Todavía no hay un análisis guardado. Esperá a la próxima corrida del "
                     "scraper local (corre 2-3 veces por día).")
+        # Consultoras ENCIMA del snapshot: el scraper las desconoce (sube la
+        # comparación vacía), así que el CSV y las automáticas se resuelven acá,
+        # al momento de la consulta, contra los candidatos ya guardados. Sin
+        # consultoras pedidas, la comparación del snapshot queda tal cual.
+        pollster_rows, extra_warnings = parse_pollster_csv(pollster_csv)
+        extra_warnings = list(extra_warnings)
+        if auto_consultoras:
+            import pollsters
+            _p("Buscando consultoras automáticamente…", 80)
+            auto_rows, auto_warnings = pollsters.fetch_pollster_rows(
+                fecha_desde=date, country=country)
+            extra_warnings.extend(auto_warnings)
+            pollster_rows = _merge_pollster_rows(auto_rows, pollster_rows)
+        if pollster_rows:
+            comparacion, comp_warnings = compare_vs_pollsters(
+                snap.get("candidatos") or [], pollster_rows)
+            snap["comparacion"] = comparacion
+            extra_warnings.extend(comp_warnings)
+        if extra_warnings:
+            snap.setdefault("meta", {}).setdefault("warnings", []).extend(extra_warnings)
         return snap
 
     # 1) CSV primero: si el header es inválido, cortamos con ValueError (-> 400).
