@@ -66,8 +66,12 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
              onChange={(e) => setKeywords(e.target.value)} placeholder="Términos (coma-separados)" />
       <input style={{ ...field, width: "70px" }} value={country}
              onChange={(e) => setCountry(e.target.value)} placeholder="país" title="Código ISO (ar, br, ...)" />
-      <input style={{ ...field, width: "150px" }} type="date" value={date}
-             onChange={(e) => setDate(e.target.value)} title="Desde" />
+      <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "var(--text-secondary)" }}
+           title="Ver el análisis guardado de ese día (vacío = el último disponible)">
+        <span>Día:</span>
+        <input style={{ ...field, width: "150px" }} type="date" value={date}
+               onChange={(e) => setDate(e.target.value)} />
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "var(--text-secondary)" }}
            title="Redes a analizar">
         <span>Redes:</span>

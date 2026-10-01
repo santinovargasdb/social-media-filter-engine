@@ -1,12 +1,16 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import UrnaParamsBar from "@/components/urna/UrnaParamsBar";
 import DisclaimerBanner from "@/components/urna/DisclaimerBanner";
-import { runBocaDeUrnaAsync, UrnaRequest, UrnaResponse, UrnaProgress } from "@/lib/urnaApi";
+import {
+  fetchUrnaHistorial, runBocaDeUrnaAsync,
+  UrnaHistorialPunto, UrnaRequest, UrnaResponse, UrnaProgress,
+} from "@/lib/urnaApi";
 import SentimentBarChart from "@/components/urna/SentimentBarChart";
 import EvidencePanel from "@/components/urna/EvidencePanel";
 import ComparisonTable from "@/components/urna/ComparisonTable";
+import EvolutionChart from "@/components/urna/EvolutionChart";
 
 const DEFAULT_DISCLAIMER =
   "Este indicador refleja el clima de conversación en redes sociales sobre publicaciones públicas indexadas. No es una muestra representativa del electorado ni una proyección de resultado electoral. Sirve como termómetro direccional, complementario a las encuestas de consultoras.";
@@ -21,6 +25,11 @@ export default function BocaDeUrnaPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<UrnaProgress | null>(null);
+  const [historial, setHistorial] = useState<UrnaHistorialPunto[]>([]);
+
+  // La evolución sale de los snapshots guardados: se carga al entrar, sin
+  // necesidad de correr un análisis (fetchUrnaHistorial devuelve [] si falla).
+  useEffect(() => { fetchUrnaHistorial().then(setHistorial); }, []);
 
   const run = useCallback(async (req: UrnaRequest) => {
     setLoading(true); setError(null); setProgress({ phase: "Iniciando…", pct: 0 }); setData(null);
@@ -101,6 +110,16 @@ export default function BocaDeUrnaPage() {
               </section>
             </div>
           </>
+        )}
+        {historial.length >= 2 && (
+          <div style={{ marginTop: "28px" }}>
+            <h3 style={{ fontSize: "14px", marginBottom: "4px" }}>Evolución de la conversación</h3>
+            <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginBottom: "10px" }}>
+              Share de menciones por candidato en cada corrida del scraper (2-3 por día).
+              Elegí un día arriba y «Analizar» para ver el detalle de esa fecha.
+            </div>
+            <EvolutionChart historial={historial} />
+          </div>
         )}
       </div>
     </main>

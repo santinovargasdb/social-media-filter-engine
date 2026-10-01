@@ -561,17 +561,26 @@ def run_boca_de_urna(keywords: list[str], networks: list[str], date: str | None,
     async (jobs.py); si no se pasa, es no-op (los llamados síncronos no cambian)."""
     _p = progress_cb or (lambda phase, pct: None)
 
-    # Modo 'stored': no se busca en vivo — se devuelve el último snapshot que dejó el
-    # scraper local (batch). Así la app muestra el último análisis real aunque la PC de
-    # la oficina esté apagada. Import diferido para no acoplar el store al camino normal.
+    # Modo 'stored': no se busca en vivo — se sirve un snapshot que dejó el scraper
+    # local (batch). Sin fecha, el último; con fecha, el de ESE día (o el más cercano
+    # anterior, con aviso). Así la app muestra análisis reales aunque la PC de la
+    # oficina esté apagada. Import diferido para no acoplar el store al camino normal.
     if _urna_backend_mode() == "stored":
-        _p("Leyendo el último análisis guardado…", 50)
         import store
-        snap = store.read_latest_snapshot()
-        if snap is None:
-            raise UpstreamUnavailableError(
-                "Todavía no hay un análisis guardado. Esperá a la próxima corrida del "
-                "scraper local (corre 2-3 veces por día).")
+        if date:
+            _p(f"Buscando el análisis guardado del {date}…", 50)
+            snap = store.read_snapshot_for_date(date)
+            if snap is None:
+                raise UpstreamUnavailableError(
+                    f"No hay ningún análisis guardado hasta el {date}. Probá una fecha "
+                    "posterior a la primera corrida del scraper local.")
+        else:
+            _p("Leyendo el último análisis guardado…", 50)
+            snap = store.read_latest_snapshot()
+            if snap is None:
+                raise UpstreamUnavailableError(
+                    "Todavía no hay un análisis guardado. Esperá a la próxima corrida del "
+                    "scraper local (corre 2-3 veces por día).")
         return snap
 
     # 1) CSV primero: si el header es inválido, cortamos con ValueError (-> 400).

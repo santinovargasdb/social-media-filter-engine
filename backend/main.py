@@ -221,6 +221,16 @@ async def boca_de_urna_status(job_id: str):
     }
 
 
+@app.get("/api/boca-de-urna/historial")
+async def boca_de_urna_historial():
+    """Serie histórica de los snapshots del scraper local (para el gráfico de
+    evolución): [{generado_en, candidatos}] ascendente, sin evidencia. Devuelve []
+    si el store no está configurado. Import diferido y thread: requests es
+    bloqueante y no debe frenar el event loop."""
+    import store
+    return await asyncio.to_thread(store.read_snapshot_history)
+
+
 class GenerateDocxRequest(BaseModel):
     posts: List[PostOut]
 

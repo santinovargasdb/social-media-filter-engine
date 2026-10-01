@@ -40,6 +40,16 @@ export interface UrnaRequest {
   pollster_csv: string; auto_consultoras: boolean;
 }
 
+// Un punto de la serie histórica (una corrida del scraper local).
+export interface UrnaHistorialCandidato {
+  nombre: string; menciones: number; pct: number;
+  pos?: number; neg?: number; neu?: number;
+}
+export interface UrnaHistorialPunto {
+  generado_en: string;
+  candidatos: UrnaHistorialCandidato[];
+}
+
 export interface UrnaProgress { phase: string; pct: number; }
 export interface UrnaJobStatus {
   state: "running" | "done" | "error";
@@ -73,6 +83,25 @@ async function post(path: string, body: unknown, timeoutMs: number): Promise<Res
 
 async function detailOrDefault(res: Response, fallback: string): Promise<string> {
   try { return (await res.json())?.detail || fallback; } catch { return fallback; }
+}
+
+// Serie histórica para el gráfico de evolución. Es complementaria: cualquier
+// fallo devuelve [] y la página simplemente no muestra el gráfico.
+const HISTORIAL_TIMEOUT_MS = 90_000; // GET liviano, pero puede despertar Render (~40s)
+
+export async function fetchUrnaHistorial(): Promise<UrnaHistorialPunto[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HISTORIAL_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API_BASE}/api/boca-de-urna/historial`, { signal: controller.signal });
+    if (!res.ok) return [];
+    const rows = (await res.json()) as UrnaHistorialPunto[];
+    return Array.isArray(rows) ? rows.filter((r) => Array.isArray(r.candidatos)) : [];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function startBocaDeUrna(req: UrnaRequest): Promise<string> {
