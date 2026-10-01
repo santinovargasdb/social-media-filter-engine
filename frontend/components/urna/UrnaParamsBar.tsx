@@ -8,10 +8,21 @@ interface Props {
   onRun: (req: UrnaRequest) => void;
 }
 
+// Término de búsqueda FIJO por decisión institucional: este motor analiza la
+// conversación electoral y nada más (el usuario no lo edita).
+const KEYWORDS_FIJOS = ["elecciones presidenciales"];
+
+// Hoy en fecha LOCAL (toISOString pelado es UTC: en Argentina mostraría "mañana"
+// después de las 21:00).
+function hoyISO(): string {
+  return new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 10);
+}
+
 export default function UrnaParamsBar({ loading, onRun }: Props) {
-  const [keywords, setKeywords] = useState("elecciones presidenciales");
   const [country, setCountry] = useState("ar");
   const [date, setDate] = useState("");
+  const hoy = hoyISO();
   const [csvText, setCsvText] = useState("");
   const [csvName, setCsvName] = useState("");
   const [csvRows, setCsvRows] = useState(0);
@@ -43,9 +54,10 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
 
   const submit = () => {
     onRun({
-      keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
+      keywords: KEYWORDS_FIJOS,
       networks: networks.length ? networks : ["twitter"],
-      date: date || null,
+      // Doble cerrojo contra fechas futuras (el max del input se puede tipear por encima).
+      date: date && date <= hoy ? date : null,
       country: country.trim().toLowerCase() || "ar",
       pollster_csv: csvText,
       auto_consultoras: autoConsultoras,
@@ -62,15 +74,18 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
       display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center",
       padding: "12px 24px", borderBottom: "1px solid var(--border-color)", background: "var(--bg-secondary)",
     }}>
-      <input style={{ ...field, flex: "1 1 260px" }} value={keywords}
-             onChange={(e) => setKeywords(e.target.value)} placeholder="Términos (coma-separados)" />
+      <span style={{ ...field, flex: "1 1 260px", border: "1px dashed var(--border-color)",
+                     color: "var(--text-secondary)", cursor: "default", userSelect: "none" }}
+            title="Tema fijo del motor: solo analiza la conversación electoral">
+        Buscando: &ldquo;elecciones presidenciales&rdquo;
+      </span>
       <input style={{ ...field, width: "70px" }} value={country}
              onChange={(e) => setCountry(e.target.value)} placeholder="país" title="Código ISO (ar, br, ...)" />
       <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "var(--text-secondary)" }}
            title="Ver el análisis guardado de ese día (vacío = el último disponible)">
         <span>Día:</span>
-        <input style={{ ...field, width: "150px" }} type="date" value={date}
-               onChange={(e) => setDate(e.target.value)} />
+        <input style={{ ...field, width: "150px" }} type="date" value={date} max={hoy}
+               onChange={(e) => setDate(e.target.value && e.target.value > hoy ? hoy : e.target.value)} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "var(--text-secondary)" }}
            title="Redes a analizar">
