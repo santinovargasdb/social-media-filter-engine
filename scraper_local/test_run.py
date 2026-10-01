@@ -126,6 +126,27 @@ def test_capturar_candidato_rota_ante_sesion_invalida(tmp_path, monkeypatch):
     assert any("quemada" in w for w in warnings)
 
 
+def test_capturar_candidato_challenge_no_quema_ni_rota(tmp_path, monkeypatch):
+    """Captcha/timeout (DesafioTemporalError) NO es evidencia de cuenta muerta:
+    warning + candidato salteado, sin quemar ni rotar — el challenge es de la
+    máquina/IP y la otra cuenta chocaría con el mismo muro."""
+    pool = {"cuentas": [
+        {"alias": "a", "estado": "activa", "ultima_vez": "", "notas": ""},
+        {"alias": "b", "estado": "activa", "ultima_vez": "2026-09-01T00:00:00+00:00", "notas": ""},
+    ]}
+    usadas = []
+    def challenge(sesion, termino, cfg, cfg_red, carpeta, prefijo, warnings):
+        usadas.append(sesion.name)
+        raise browser_mod.DesafioTemporalError("captcha en pantalla")
+    monkeypatch.setattr(twitter, "capturar", challenge)
+    warnings = []
+    capturas = run.capturar_candidato("twitter", _cfg(), pool, "Javier Milei", tmp_path, warnings)
+    assert capturas == []
+    assert usadas == ["a.json"]  # sin rotación
+    assert all(c["estado"] == "activa" for c in pool["cuentas"])  # nadie quemada
+    assert any("challenge" in w for w in warnings)
+
+
 def test_capturar_candidato_sin_cuentas_devuelve_vacio(tmp_path):
     warnings = []
     rutas = run.capturar_candidato("twitter", _cfg(), {"cuentas": []}, "X", tmp_path, warnings)

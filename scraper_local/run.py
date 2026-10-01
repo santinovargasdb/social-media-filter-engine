@@ -195,6 +195,8 @@ def armar_payload(bloques: list[dict], warnings: list[str]) -> dict:
 def capturar_candidato(red_nombre: str, cfg: dict, pool: dict, candidato: str,
                        carpeta: Path, warnings: list[str]) -> list[dict]:
     """Capturas de UN candidato en UNA red, rotando la cuenta UNA vez si se quema.
+    Solo el redirect a login (SesionInvalidaError) quema; captcha/timeout
+    (DesafioTemporalError) saltea el candidato sin tocar la cuenta.
     Devuelve [] si no se pudo (el resto de la corrida sigue)."""
     red_mod = redes.POR_NOMBRE[red_nombre]
     for _intento in range(2):  # cuenta actual + una rotación
@@ -209,6 +211,13 @@ def capturar_candidato(red_nombre: str, cfg: dict, pool: dict, candidato: str,
                 prefijo=f"{red_nombre}-{_slug(candidato)}", warnings=warnings)
             accounts.registrar_uso(pool, cuenta["alias"])
             return capturas
+        except browser.DesafioTemporalError as e:
+            # Challenge a la máquina/IP, no a la cuenta: no se quema ni se rota
+            # (la otra cuenta chocaría con el mismo muro desde esta misma IP).
+            log.warning("[%s] Challenge temporal con '%s': %s", red_nombre, candidato, e)
+            warnings.append(f"[{red_nombre}] '{candidato}' salteado por challenge temporal "
+                            f"({e}); la cuenta sigue activa.")
+            return []
         except browser.SesionInvalidaError as e:
             log.warning("[%s] Cuenta '%s' quemada/challenge: %s", red_nombre, cuenta["alias"], e)
             accounts.marcar_quemada(pool, cuenta["alias"])

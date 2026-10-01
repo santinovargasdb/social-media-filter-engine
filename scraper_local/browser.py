@@ -20,7 +20,16 @@ TIMEOUT_FEED_MS = 30000
 
 
 class SesionInvalidaError(Exception):
-    """La sesión no sirve: redirect a login/challenge o el feed no apareció."""
+    """La sesión no sirve de verdad (la red redirigió a login/challenge). Es la
+    ÚNICA evidencia que amerita quemar la cuenta: la vuelta es login manual."""
+
+
+class DesafioTemporalError(Exception):
+    """Challenge transitorio: captcha, muro anti-bot o feed que no carga a tiempo.
+    La cookie de sesión casi seguro sigue viva — el desafío es a la máquina/IP, no
+    a la cuenta (medido 2026-09-30: dos cuentas de TikTok "muertas" con 2 min de
+    diferencia eran el anti-bot, y Twitter tuvo timeouts de 30s con sesiones
+    sanas). No quemar: warning, saltear y reintentar en la corrida siguiente."""
 
 
 def esperar_aleatorio(rango) -> None:

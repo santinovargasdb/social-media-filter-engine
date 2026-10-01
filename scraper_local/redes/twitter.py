@@ -38,7 +38,8 @@ def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
         try:
             page.wait_for_selector(SELECTOR_FEED, timeout=browser.TIMEOUT_FEED_MS)
         except PWTimeout:
-            raise browser.SesionInvalidaError("el feed no apareció (¿challenge o sesión vencida?)")
+            raise browser.DesafioTemporalError(
+                "el feed no apareció en 30s (challenge o página lenta; la sesión sigue)")
         browser.esperar_aleatorio(esperas)  # dejar asentar el feed antes de la primera captura
         rutas = browser.capturar_pagina(page, cfg_red["scrolls_por_candidato"],
                                         esperas, carpeta, prefijo)

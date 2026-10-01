@@ -64,7 +64,8 @@ def _verificar_sesion(page) -> None:
     if any(marca in page.url for marca in MARCAS_SESION_MUERTA):
         raise browser.SesionInvalidaError(f"redirigido a {page.url}")
     if page.locator(SELECTOR_CAPTCHA).count() > 0:
-        raise browser.SesionInvalidaError("captcha de TikTok en pantalla")
+        # El captcha desafía a la máquina/IP, no a la cuenta: la sesión sigue viva.
+        raise browser.DesafioTemporalError("captcha de TikTok en pantalla")
 
 
 def _capturar_comentarios(page, termino: str, video_url: str, cfg: dict, cfg_red: dict,
@@ -122,8 +123,8 @@ def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
         try:
             page.wait_for_selector(SELECTOR_RESULTADOS, timeout=browser.TIMEOUT_FEED_MS)
         except PWTimeout:
-            raise browser.SesionInvalidaError(
-                "los resultados de TikTok no aparecieron (¿captcha o sesión vencida?)")
+            raise browser.DesafioTemporalError(
+                "los resultados de TikTok no aparecieron (captcha/anti-bot probable)")
         browser.esperar_aleatorio(esperas)
         capturas = [{"ruta": r, "contexto": ""} for r in browser.capturar_pagina(
             page, cfg_red["scrolls_por_candidato"], esperas, carpeta, prefijo)]
