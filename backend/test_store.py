@@ -37,12 +37,15 @@ def test_read_snapshot_for_date_consulta_hasta_fin_del_dia_argentino(monkeypatch
     assert snap["meta"]["warnings"] == []  # el snapshot ES de ese día: sin aviso extra
 
 
-def test_read_snapshot_for_date_dia_sin_corrida_avisa(monkeypatch):
-    # El 29/9 no hubo corrida: devuelve el más cercano ANTERIOR, avisando en meta.
-    _mock_get(monkeypatch, [{"payload": {"meta": {"warnings": []}},
+def test_read_snapshot_for_date_dia_sin_corrida_avisa_primero(monkeypatch):
+    # El 29/9 no hubo corrida: devuelve el más cercano ANTERIOR, avisando PRIMERO
+    # (el snapshot puede arrastrar decenas de warnings históricos propios y el
+    # aviso de fecha no debe quedar enterrado al final).
+    _mock_get(monkeypatch, [{"payload": {"meta": {"warnings": ["histórico viejo"]}},
                              "generado_en": "2026-09-27T19:00:00+00:00"}], [])
     snap = store.read_snapshot_for_date("2026-09-29")
-    assert any("anterior" in w for w in snap["meta"]["warnings"])
+    assert "anterior" in snap["meta"]["warnings"][0]
+    assert snap["meta"]["warnings"][1] == "histórico viejo"
 
 
 def test_read_snapshot_for_date_sin_filas_devuelve_none(monkeypatch):

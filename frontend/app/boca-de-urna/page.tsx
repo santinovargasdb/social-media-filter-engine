@@ -17,7 +17,9 @@ const DEFAULT_DISCLAIMER =
 
 function fmtFecha(iso: string): string {
   const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleString("es-AR");
+  // hour12 explícito: según el navegador, es-AR puede salir 12h sin "p.m."
+  // y "16:00" se lee como "04:00" de la madrugada.
+  return isNaN(d.getTime()) ? iso : d.toLocaleString("es-AR", { hour12: false });
 }
 
 export default function BocaDeUrnaPage() {

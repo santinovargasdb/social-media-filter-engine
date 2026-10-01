@@ -91,8 +91,10 @@ def read_snapshot_for_date(fecha: str) -> dict | None:
         return None
     payload = _payload_de(rows[0])
     if isinstance(payload, dict) and _es_anterior_a(rows[0].get("generado_en"), ini):
-        payload["meta"].setdefault("warnings", []).append(
-            f"Sin corrida del scraper el {fecha}: se muestra el análisis más cercano anterior.")
+        # PRIMERO en la lista: el snapshot puede arrastrar decenas de warnings
+        # históricos propios y este aviso es el que explica qué estás viendo.
+        payload["meta"].setdefault("warnings", []).insert(
+            0, f"Sin corrida del scraper el {fecha}: se muestra el análisis más cercano anterior.")
     return payload
 
 
