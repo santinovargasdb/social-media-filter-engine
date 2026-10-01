@@ -130,7 +130,12 @@ def _dedup_latest(rows: list[dict]) -> list[dict]:
 
 
 # ── Config de fetch ───────────────────────────────────────────────────────────
-ARTICULOS_POR_CONSULTORA = 2          # cuántas notas mirar por consultora
+# 4 notas por consultora (antes 2): más chances de encontrar la tabla completa de
+# candidatos y no solo los punteros del titular. No suma búsquedas de SerpAPI (es
+# el mismo search con más resultados); sí agranda el prompt de Gemini (~8k chars
+# por nota, tope _ARTICLE_MAX_CHARS) — medido 2026-10-01: con 2 notas, 3 de 5
+# consultoras no extraían ningún porcentaje.
+ARTICULOS_POR_CONSULTORA = 4
 # Ventana de recencia: la búsqueda prioriza notas de los últimos N días (encuestas
 # frescas). Si no hay nada reciente, cae a búsqueda amplia (mejor una nota vieja,
 # claramente fechada, que ninguna). Editable.
