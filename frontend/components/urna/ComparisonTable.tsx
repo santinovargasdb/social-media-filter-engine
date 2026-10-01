@@ -9,9 +9,12 @@ function gapColor(gap: number | null): string {
 }
 const fmt = (n: number | null) => (n === null ? "—" : `${n > 0 ? "+" : ""}${n}`);
 
-export default function ComparisonTable({ comparacion }: { comparacion: UrnaComparacion[] }) {
+export default function ComparisonTable({ comparacion, basePositivas }:
+  { comparacion: UrnaComparacion[]; basePositivas?: number }) {
   if (!comparacion.length) return <p style={{ color: "var(--text-secondary)", fontSize: "13px" }}>Cargá un CSV de consultoras para ver la comparación.</p>;
   const consultoras = Array.from(new Set(comparacion.flatMap((c) => c.consultoras.map((x) => x.consultora)))).sort();
+  // Snapshots viejos no traen redes_metrica: eran share de menciones.
+  const esApoyo = comparacion[0].redes_metrica === "apoyo";
   const th: React.CSSProperties = { textAlign: "left", padding: "6px 8px", fontSize: "11px",
     textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--text-secondary)", borderBottom: "1px solid var(--border-color)" };
   const td: React.CSSProperties = { padding: "6px 8px", fontSize: "13px", borderBottom: "1px solid var(--border-color)" };
@@ -22,7 +25,7 @@ export default function ComparisonTable({ comparacion }: { comparacion: UrnaComp
         <thead>
           <tr>
             <th style={th}>Candidato</th>
-            <th style={th}>Redes</th>
+            <th style={th}>{esApoyo ? "Apoyo en redes" : "Redes (menciones)"}</th>
             {consultoras.map((c) => <th key={c} style={th}>{c}</th>)}
             <th style={th}>Prom. consult.</th>
             <th style={th}>Brecha prom.</th>
@@ -59,7 +62,16 @@ export default function ComparisonTable({ comparacion }: { comparacion: UrnaComp
         </tbody>
       </table>
       <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "8px" }}>
-        Datos extraídos automáticamente de fuentes públicas. Tocá el{" "}
+        {esApoyo ? (
+          <>
+            «Apoyo en redes» = porción de las menciones positivas del corpus que se lleva cada
+            candidato{typeof basePositivas === "number" ? ` (sobre ${basePositivas} menciones positivas)` : ""},
+            comparable con la intención de voto. La brecha sigue siendo termómetro, no encuesta.{" "}
+          </>
+        ) : (
+          <>Sin menciones positivas en el corpus: la columna «Redes» muestra share de menciones (volumen de conversación).{" "}</>
+        )}
+        Datos de consultoras extraídos automáticamente de fuentes públicas. Tocá el{" "}
         <span style={{ color: "var(--smata-green-light, #4CAF50)", fontWeight: 700 }}>↗</span>{" "}
         que aparece junto a cada porcentaje para abrir la nota de origen y verificarlo.
       </p>

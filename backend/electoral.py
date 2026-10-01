@@ -335,7 +335,22 @@ def _keys_match(key_redes: str, key_csv: str) -> bool:
 
 def compare_vs_pollsters(candidatos: list[dict], pollster_rows: list[dict]) -> tuple[list[dict], list[str]]:
     """Cruza los % de redes con los del CSV por candidato (última fecha por
-    consultora). Devuelve (comparacion, warnings)."""
+    consultora). Devuelve (comparacion, warnings).
+
+    El lado "redes" es el SHARE DE APOYO (menciones positivas del candidato sobre
+    el total de positivas del corpus): reparte 100% entre candidatos igual que la
+    intención de voto de una consultora. El share de menciones mide volumen de
+    conversación (hablar ≠ apoyar) y daba brechas enormes sin sentido; queda solo
+    como fallback cuando el corpus no tiene ninguna mención positiva."""
+    total_pos = sum(c.get("pos", 0) for c in candidatos)
+
+    def _redes_pct(c: dict) -> float:
+        if total_pos > 0:
+            return round(100 * c.get("pos", 0) / total_pos, 1)
+        return c["pct"]
+
+    metrica = "apoyo" if total_pos > 0 else "menciones"
+
     # Última fecha por (candidato_key, consultora).
     latest: dict[tuple[str, str], dict] = {}
     for r in pollster_rows:
@@ -376,23 +391,29 @@ def compare_vs_pollsters(candidatos: list[dict], pollster_rows: list[dict]) -> t
                             "fuente_titulo": r.get("fuente_titulo"),
                             "fecha": r.get("fecha", ""),
                         }
+        redes_pct = _redes_pct(c)
         consultoras = [
-            {"consultora": nombre, "pct": d["pct"], "gap": round(c["pct"] - d["pct"], 1),
+            {"consultora": nombre, "pct": d["pct"], "gap": round(redes_pct - d["pct"], 1),
              "fuente_url": d.get("fuente_url"), "fuente_titulo": d.get("fuente_titulo"),
              "fecha": d.get("fecha", "")}
             for nombre, d in sorted(consultoras_data.items())
         ]
         if consultoras_data:
             promedio = round(sum(d["pct"] for d in consultoras_data.values()) / len(consultoras_data), 1)
-            gap_promedio = round(c["pct"] - promedio, 1)
+            gap_promedio = round(redes_pct - promedio, 1)
         else:
             promedio, gap_promedio = None, None
         comparacion.append({
-            "candidato": c["nombre"], "redes_pct": c["pct"], "consultoras": consultoras,
+            "candidato": c["nombre"], "redes_pct": redes_pct, "redes_metrica": metrica,
+            "consultoras": consultoras,
             "promedio_consultoras": promedio, "gap_promedio": gap_promedio,
         })
 
     warnings: list[str] = []
+    if pollster_rows and metrica == "menciones":
+        warnings.append(
+            "Sin menciones positivas en el corpus: la comparación contra consultoras "
+            "usa el share de menciones (volumen de conversación), no apoyo.")
     for cand_key, _consultoras_pct in por_candidato.items():
         if cand_key not in matched_csv_keys:
             nombre = next(r["candidato"] for r in pollster_rows if canonical_key(r["candidato"]) == cand_key)

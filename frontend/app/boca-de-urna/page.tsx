@@ -108,7 +108,8 @@ export default function BocaDeUrnaPage() {
               </section>
               <section style={{ minWidth: 0 }}>
                 <h3 style={{ fontSize: "14px", marginBottom: "10px" }}>Redes vs consultoras</h3>
-                <ComparisonTable comparacion={data.comparacion} />
+                <ComparisonTable comparacion={data.comparacion}
+                                 basePositivas={data.candidatos.reduce((s, c) => s + c.pos, 0)} />
               </section>
             </div>
           </>

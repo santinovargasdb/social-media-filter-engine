@@ -23,6 +23,9 @@ export interface UrnaConsultora {
 export interface UrnaComparacion {
   candidato: string; redes_pct: number; consultoras: UrnaConsultora[];
   promedio_consultoras: number | null; gap_promedio: number | null;
+  // "apoyo" = share de menciones positivas (comparable con intención de voto);
+  // "menciones" = fallback cuando el corpus no tiene ninguna positiva.
+  redes_metrica?: "apoyo" | "menciones";
 }
 export interface UrnaMeta {
   total_posts: number; posts_electorales: number; disclaimer: string; warnings: string[];
