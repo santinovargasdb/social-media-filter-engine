@@ -6,6 +6,7 @@ pestaña Posts → extrae links de posts vía DOM (sin Gemini sobre la grilla,
 los thumbnails no tienen texto) → abre posts de punteros y los captura.
 
 Los selectores REALES se tunean en la PC de la oficina (marcados TUNEAR)."""
+import unicodedata
 from pathlib import Path
 
 import browser
@@ -49,13 +50,26 @@ def links_de_posts(hrefs: list[str], cantidad: int) -> list[str]:
     return out
 
 
-def _hashtag_para(termino: str, cfg_red: dict) -> str:
-    """Hashtag de Instagram para el término dado (sin #). cfg_red sobreescribe defaults."""
+def _plegar_ascii(texto: str) -> str:
+    """Quita marcas diacríticas (ñ→n, tildes fuera) vía descomposición NFD."""
+    descompuesto = unicodedata.normalize("NFD", texto)
+    return "".join(c for c in descompuesto if not unicodedata.combining(c))
+
+
+def _hashtags_para(termino: str, cfg_red: dict) -> list[str]:
+    """Hashtags de Instagram a intentar para el término dado (sin #), en orden.
+
+    El primario sale del mapping (defaults sobreescritos por cfg_red) o del
+    término sin espacios ni símbolos; si tiene diacríticos se agrega la
+    variante plegada a ASCII como fallback (SergioUñac → SergioUnac)."""
     mapping = dict(HASHTAGS_CANDIDATOS)
     mapping.update(cfg_red.get("hashtags_candidatos") or {})
     if termino in mapping:
-        return mapping[termino]
-    return "".join(c for c in termino.replace(" ", "") if c.isalnum())
+        primario = mapping[termino]
+    else:
+        primario = "".join(c for c in termino.replace(" ", "") if c.isalnum())
+    plegado = _plegar_ascii(primario)
+    return [primario] if plegado == primario else [primario, plegado]
 
 
 def _verificar_sesion(page) -> None:
@@ -67,24 +81,28 @@ def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
              carpeta: Path, prefijo: str, warnings: list[str]) -> list[dict]:
     from playwright.sync_api import TimeoutError as PWTimeout  # diferido
     esperas = tuple(cfg["espera_entre_scrolls"])
-    hashtag = _hashtag_para(termino, cfg_red)
-    tag_url = f"https://www.instagram.com/explore/tags/{hashtag}/"
+    hashtags = _hashtags_para(termino, cfg_red)
 
     with browser.pagina_con_sesion(sesion, tuple(cfg["viewport"]), cfg["headless"]) as page:
-        page.goto(tag_url, timeout=browser.TIMEOUT_FEED_MS)
-        try:
-            page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
-            pass
-        browser.esperar_aleatorio((2, 4))
-        _verificar_sesion(page)
-
-        # Esperar a que aparezcan links de posts en la grilla del hashtag
-        try:
-            page.wait_for_selector(SELECTOR_POST_LINKS, timeout=browser.TIMEOUT_FEED_MS)
-        except PWTimeout:
+        # Probar cada variante de hashtag hasta que una muestre posts
+        for hashtag in hashtags:
+            page.goto(f"https://www.instagram.com/explore/tags/{hashtag}/",
+                      timeout=browser.TIMEOUT_FEED_MS)
+            try:
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            browser.esperar_aleatorio((2, 4))
+            _verificar_sesion(page)
+            try:
+                page.wait_for_selector(SELECTOR_POST_LINKS, timeout=browser.TIMEOUT_FEED_MS)
+                break
+            except PWTimeout:
+                continue
+        else:
+            intentados = " ni ".join(f"'#{h}'" for h in hashtags)
             warnings.append(
-                f"[instagram] Sin posts para '#{hashtag}' (¿hashtag inexistente?).")
+                f"[instagram] Sin posts para {intentados} (¿hashtag inexistente?).")
             return []
 
         # Scroll para exponer más posts antes de extraer

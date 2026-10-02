@@ -37,3 +37,27 @@ def test_links_de_posts_menos_que_pedidos():
         "https://www.instagram.com/p/AAA/"
     ]
     assert instagram.links_de_posts([], 3) == []
+
+
+def test_hashtags_para_no_mapeado_con_enie_agrega_variante_ascii():
+    assert instagram._hashtags_para("Sergio Uñac", {}) == ["SergioUñac", "SergioUnac"]
+
+
+def test_hashtags_para_candidato_mapeado_ascii_sin_variante():
+    assert instagram._hashtags_para("Cristina Fernández de Kirchner", {}) == ["cfk"]
+
+
+def test_hashtags_para_nombre_ascii_sin_variante():
+    assert instagram._hashtags_para("Javier Milei", {}) == ["javierMilei"]
+
+
+def test_hashtags_para_override_no_ascii_agrega_variante_ascii():
+    cfg_red = {"hashtags_candidatos": {"Sergio Uñac": "uñacGobernador"}}
+    assert instagram._hashtags_para("Sergio Uñac", cfg_red) == [
+        "uñacGobernador", "unacGobernador"
+    ]
+
+
+def test_hashtags_para_dedup_si_plegado_igual_al_primario():
+    cfg_red = {"hashtags_candidatos": {"Sergio Uñac": "sergiounac"}}
+    assert instagram._hashtags_para("Sergio Uñac", cfg_red) == ["sergiounac"]
