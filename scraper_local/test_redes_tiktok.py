@@ -101,6 +101,88 @@ def test_resultados_timeout_es_challenge_temporal(monkeypatch, tmp_path):
                         {"scrolls_por_candidato": 1}, tmp_path, "p", [])
 
 
+class _IconoComentarios:
+    def __init__(self, visible, clicks):
+        self._visible = visible
+        self._clicks = clicks
+
+    def is_visible(self):
+        return self._visible
+
+    def click(self):
+        self._clicks.append(self._visible)
+
+
+class _LocatorIconos(_Locator):
+    def __init__(self, visibles, clicks):
+        super().__init__(len(visibles))
+        self._visibles = visibles
+        self._clicks = clicks
+
+    def nth(self, i):
+        return _IconoComentarios(self._visibles[i], self._clicks)
+
+
+class _PaginaVideo:
+    """Página de video del layout 2026: los comentarios NO se renderizan hasta
+    clickear el ícono; no existe [data-e2e='comment-list']."""
+    url = "https://www.tiktok.com/@a/video/111"
+
+    def __init__(self, iconos_visibles=(False, True)):
+        self.clicks = []
+        self.esperados = []
+        self._iconos = iconos_visibles
+
+    def goto(self, *a, **k):
+        pass
+
+    def locator(self, selector):
+        if "comment-icon" in selector:
+            return _LocatorIconos(self._iconos, self.clicks)
+        return _Locator(0)
+
+    def wait_for_selector(self, selector, timeout=None):
+        self.esperados.append(selector)
+
+
+def test_capturar_comentarios_clickea_icono_visible_y_captura_panel(monkeypatch, tmp_path):
+    """Layout 2026: el panel derecho arranca en 'Podría interesarte'; hay que
+    clickear el comment-icon VISIBLE (hay otro oculto en el inbox), esperar un
+    comentario renderizado y capturar el contenedor scrolleable del panel."""
+    page = _PaginaVideo(iconos_visibles=(False, True))
+    capturados = []
+    monkeypatch.setattr(browser, "capturar_elemento",
+                        lambda p, sel, scrolls, esperas, carpeta, prefijo:
+                        capturados.append(sel) or [tmp_path / "c-1.png"])
+    monkeypatch.setattr(browser, "esperar_aleatorio", lambda rango: None)
+    warnings = []
+    cfg = {"espera_entre_scrolls": [0, 0]}
+    out = tiktok._capturar_comentarios(page, "Javier Milei", page.url, cfg,
+                                       {"scrolls_comentarios": 1}, tmp_path, "p", warnings)
+    assert page.clicks == [True]                     # solo el ícono visible
+    # La página hidrata lento: hay que ESPERAR el ícono visible antes de buscarlo
+    # (verificado e2e 2026-10-02: sin esta espera el clic llega antes que el DOM).
+    assert tiktok.SELECTOR_ICONO_COMENTARIOS + ":visible" in page.esperados
+    assert tiktok.SELECTOR_COMENTARIO in page.esperados
+    assert capturados == [tiktok.SELECTOR_PANEL_COMENTARIOS]
+    assert warnings == []
+    assert len(out) == 1 and "Javier Milei" in out[0]["contexto"]
+
+
+def test_capturar_comentarios_sin_icono_visible_degrada_a_warning(monkeypatch, tmp_path):
+    """Sin ícono de comentarios clickeable (ej. comentarios desactivados): warning
+    y lista vacía, la corrida sigue — nunca quemar la cuenta por esto."""
+    page = _PaginaVideo(iconos_visibles=(False, False))
+    monkeypatch.setattr(browser, "esperar_aleatorio", lambda rango: None)
+    warnings = []
+    cfg = {"espera_entre_scrolls": [0, 0]}
+    out = tiktok._capturar_comentarios(page, "Javier Milei", page.url, cfg,
+                                       {"scrolls_comentarios": 1}, tmp_path, "p", warnings)
+    assert out == []
+    assert len(warnings) == 1 and "Javier Milei" in warnings[0]
+    assert "ícono" in warnings[0]                    # causa real, no una excepción accidental
+
+
 def test_links_de_videos_filtra_dedupea_y_corta():
     hrefs = [
         "https://www.tiktok.com/@a/video/111",

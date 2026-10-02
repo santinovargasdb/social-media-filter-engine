@@ -19,7 +19,12 @@ LOGIN_URL = "https://www.tiktok.com/login"
 SELECTOR_TAB_VIDEOS = "text=Vídeos"
 SELECTOR_RESULTADOS = "[data-e2e='search_video-item']"   # cards en tab Vídeos
 SELECTOR_LINKS_VIDEO = "a[href*='/video/']"              # links a videos dentro de las cards
-SELECTOR_COMENTARIOS = "[data-e2e='comment-list']"       # panel de comentarios del video
+# Layout 2026 (verificado en vivo 2026-10-02): el panel derecho del video arranca
+# en la pestaña "Podría interesarte" — los comentarios NO se renderizan hasta
+# clickear el comment-icon, y ya no existe [data-e2e='comment-list'].
+SELECTOR_ICONO_COMENTARIOS = "[data-e2e='comment-icon']"  # abre la pestaña Comentarios (hay otro oculto en el inbox)
+SELECTOR_COMENTARIO = "[data-e2e='comment-level-1']"      # un comentario renderizado
+SELECTOR_PANEL_COMENTARIOS = "[class*='DivCommentMain']"  # contenedor scrolleable del panel (sufijo semántico estable)
 SELECTOR_CAPTCHA = "[id*='captcha'], [class*='captcha']"  # overlay del captcha-puzzle
 # URLs a las que TikTok redirige cuando exige login.
 MARCAS_SESION_MUERTA = ("/login", "/signup")
@@ -68,6 +73,19 @@ def _verificar_sesion(page) -> None:
         raise browser.DesafioTemporalError("captcha de TikTok en pantalla")
 
 
+def _abrir_comentarios(page) -> bool:
+    """Clic en el primer comment-icon VISIBLE para abrir la pestaña Comentarios.
+    El selector matchea también un botón oculto del inbox del header, por eso se
+    filtra por visibilidad. False si no hay ninguno clickeable (ej. comentarios
+    desactivados)."""
+    iconos = page.locator(SELECTOR_ICONO_COMENTARIOS)
+    for i in range(iconos.count()):
+        if iconos.nth(i).is_visible():
+            iconos.nth(i).click()
+            return True
+    return False
+
+
 def _capturar_comentarios(page, termino: str, video_url: str, cfg: dict, cfg_red: dict,
                           carpeta: Path, prefijo: str, warnings: list[str]) -> list[dict]:
     """Capturas del panel de comentarios de UN video. Fallas que no son de sesión
@@ -76,9 +94,17 @@ def _capturar_comentarios(page, termino: str, video_url: str, cfg: dict, cfg_red
     try:
         page.goto(video_url, timeout=browser.TIMEOUT_FEED_MS)
         _verificar_sesion(page)
-        page.wait_for_selector(SELECTOR_COMENTARIOS, timeout=browser.TIMEOUT_FEED_MS)
+        # La página hidrata lento: esperar el ícono VISIBLE antes de buscarlo
+        # (el goto resuelve con el DOM todavía sin los botones de acción).
+        page.wait_for_selector(SELECTOR_ICONO_COMENTARIOS + ":visible",
+                               timeout=browser.TIMEOUT_FEED_MS)
+        if not _abrir_comentarios(page):
+            warnings.append(f"TikTok: comentarios de un video de '{termino}' sin capturar "
+                            "(sin ícono de comentarios visible).")
+            return []
+        page.wait_for_selector(SELECTOR_COMENTARIO, timeout=browser.TIMEOUT_FEED_MS)
         browser.esperar_aleatorio(esperas)
-        rutas = browser.capturar_elemento(page, SELECTOR_COMENTARIOS,
+        rutas = browser.capturar_elemento(page, SELECTOR_PANEL_COMENTARIOS,
                                           cfg_red["scrolls_comentarios"],
                                           esperas, carpeta, prefijo)
     except browser.SesionInvalidaError:

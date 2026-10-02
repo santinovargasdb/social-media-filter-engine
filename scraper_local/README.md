@@ -206,8 +206,11 @@ habitual):
   `MARCAS_SESION_MUERTA`, `TIMEOUT_FEED_MS`.
 - **TikTok** (`redes/tiktok.py`): `SELECTOR_RESULTADOS` (hoy `[data-e2e='search_video-item']`,
   en el tab "Vídeos"; el tab "Top"/"Populares" devuelve error anti-bot),
-  `SELECTOR_LINKS_VIDEO` (hoy `a[href*='/video/']`), `SELECTOR_COMENTARIOS`,
-  `SELECTOR_CAPTCHA`. Los selectores están marcados `# TUNEAR` en el fuente.
+  `SELECTOR_LINKS_VIDEO` (hoy `a[href*='/video/']`), `SELECTOR_ICONO_COMENTARIOS` /
+  `SELECTOR_COMENTARIO` / `SELECTOR_PANEL_COMENTARIOS` (layout 2026: el panel del video
+  arranca en "Podría interesarte" — hay que clickear el comment-icon visible para que
+  los comentarios se rendericen; ya no existe `comment-list`), `SELECTOR_CAPTCHA`.
+  Los selectores están marcados `# TUNEAR` en el fuente.
   Ojo: TikTok ya corre visible (ver warning arriba); si igual da 0 con sesión
   fresca, es selector, no cuenta.
   Para probarlos sin correr la suite completa:
