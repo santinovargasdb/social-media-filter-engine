@@ -27,17 +27,11 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
   const [csvName, setCsvName] = useState("");
   const [csvRows, setCsvRows] = useState(0);
   const [autoConsultoras, setAutoConsultoras] = useState(false);
-  // X viene tildado por defecto (es la red con datos hoy vía scraping); IG/TikTok
-  // quedan disponibles para cuando tengan su scraper.
-  const [networks, setNetworks] = useState<string[]>(["twitter"]);
-
-  const NETWORKS: { id: string; label: string }[] = [
-    { id: "twitter", label: "X" },
-    { id: "instagram", label: "IG" },
-    { id: "tiktok", label: "TikTok" },
-  ];
-  const toggleNetwork = (id: string) =>
-    setNetworks((cur) => (cur.includes(id) ? cur.filter((n) => n !== id) : [...cur, id]));
+  // El selector de redes se quitó de la UI: en modo "stored" (el de producción) el
+  // backend sirve el snapshot que dejó el scraper con TODAS las redes que corrió, e
+  // ignora esta lista — tener checkboxes que no filtran nada confundía. Mandamos las
+  // tres igual por si algún día se reactiva el modo en vivo (ahí sí se consultan).
+  const ALL_NETWORKS = ["twitter", "instagram", "tiktok"];
 
   const handleCsv = (file: File | null) => {
     if (!file) { setCsvText(""); setCsvName(""); setCsvRows(0); return; }
@@ -55,7 +49,7 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
   const submit = () => {
     onRun({
       keywords: KEYWORDS_FIJOS,
-      networks: networks.length ? networks : ["twitter"],
+      networks: ALL_NETWORKS,
       // Doble cerrojo contra fechas futuras (el max del input se puede tipear por encima).
       date: date && date <= hoy ? date : null,
       country: country.trim().toLowerCase() || "ar",
@@ -86,16 +80,6 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
         <span>Día:</span>
         <input style={{ ...field, width: "150px" }} type="date" value={date} max={hoy}
                onChange={(e) => setDate(e.target.value && e.target.value > hoy ? hoy : e.target.value)} />
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "var(--text-secondary)" }}
-           title="Redes a analizar">
-        <span>Redes:</span>
-        {NETWORKS.map((n) => (
-          <label key={n.id} style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
-            <input type="checkbox" checked={networks.includes(n.id)} onChange={() => toggleNetwork(n.id)} />
-            {n.label}
-          </label>
-        ))}
       </div>
       <label style={{ ...field, cursor: "pointer", color: "var(--smata-green-light, #4CAF50)" }}>
         ⬆ CSV consultoras
