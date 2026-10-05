@@ -1,4 +1,4 @@
-import type { UrnaEvidencia, Postura } from "@/lib/urnaApi";
+import type { UrnaEvidencia, UrnaPost, Postura } from "@/lib/urnaApi";
 
 const COLOR: Record<Postura, string> = {
   a_favor: "#4CAF50", en_contra: "#F87171", neutro: "#9CA3AF",
@@ -6,6 +6,20 @@ const COLOR: Record<Postura, string> = {
 const LABEL: Record<Postura, string> = {
   a_favor: "a favor", en_contra: "en contra", neutro: "neutro",
 };
+
+// Preferimos el link al post exacto (SerpAPI); si no hay, al perfil del autor
+// (scraper por visión, que capta el @handle pero no el permalink). Los author_url
+// de snapshots viejos pueden traer el nombre mostrado con espacios ("@El Peluca
+// Milei") o un handle truncado por la UI ("@unperonist...", "@pampabrea…") → URL
+// rota: en esos casos no mostramos link.
+function urlPerfilValida(url: string): boolean {
+  return !!url && !/\s|…|\.\./.test(url);
+}
+function enlaceDe(post: UrnaPost): { href: string; label: string } | null {
+  if (post.post_url) return { href: post.post_url, label: "ver publicación ↗" };
+  if (urlPerfilValida(post.author_url)) return { href: post.author_url, label: "ver perfil ↗" };
+  return null;
+}
 
 export default function EvidencePanel({ evidencia }: { evidencia: UrnaEvidencia[] }) {
   if (!evidencia.length) return <p style={{ color: "var(--text-secondary)", fontSize: "13px" }}>Sin citas de respaldo.</p>;
@@ -20,12 +34,15 @@ export default function EvidencePanel({ evidencia }: { evidencia: UrnaEvidencia[
             <span style={{ color: "var(--text-secondary)", marginLeft: "6px" }}>({e.post.network})</span>
           </div>
           <div style={{ fontSize: "13px", fontStyle: "italic" }}>&ldquo;{e.cita}&rdquo;</div>
-          {e.post.post_url && (
-            <a href={e.post.post_url} target="_blank" rel="noreferrer"
-               style={{ fontSize: "11px", color: "var(--smata-green-light, #4CAF50)" }}>
-              ver publicación ↗
-            </a>
-          )}
+          {(() => {
+            const l = enlaceDe(e.post);
+            return l ? (
+              <a href={l.href} target="_blank" rel="noreferrer"
+                 style={{ fontSize: "11px", color: "var(--smata-green-light, #4CAF50)" }}>
+                {l.label}
+              </a>
+            ) : null;
+          })()}
         </div>
       ))}
     </div>

@@ -16,6 +16,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 from contextlib import contextmanager
@@ -132,15 +133,27 @@ def filtrar_redes(cfg: dict, redes_csv: str | None) -> dict:
     return cfg
 
 
+# Un handle válido: alfanumérico/_ con puntos solo INTERIORES (no al borde ni dobles).
+# Descarta nombres mostrados con espacios ("@El Peluca Milei") y truncados ("@algo…",
+# "@algo...") que la visión a veces prefija con @ — darían una URL de perfil rota.
+_HANDLE_RE = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9_.]*[A-Za-z0-9_])?$")
+
+
 def _author_url(autor: str, red: str) -> str:
+    """URL del PERFIL del autor a partir del @handle, o "" si `autor` no es un handle
+    real (no empieza con @, o trae espacios/caracteres inválidos/truncado)."""
+    autor = (autor or "").strip()
     if not autor.startswith("@"):
         return ""
+    handle = autor[1:]
+    if not _HANDLE_RE.match(handle):
+        return ""
     if red == "twitter":
-        return f"https://x.com/{autor[1:]}"
+        return f"https://x.com/{handle}"
     if red == "tiktok":
-        return f"https://www.tiktok.com/{autor}"
+        return f"https://www.tiktok.com/@{handle}"
     if red == "instagram":
-        return f"https://www.instagram.com/{autor[1:]}/"
+        return f"https://www.instagram.com/{handle}/"
     return ""
 
 

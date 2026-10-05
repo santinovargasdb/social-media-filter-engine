@@ -106,6 +106,25 @@ def test_author_url_por_red():
     assert run._author_url("Nombre Visible", "tiktok") == ""
 
 
+def test_author_url_rechaza_handle_con_espacios():
+    # En TikTok la visión suele leer el nombre MOSTRADO y a veces lo prefija con @.
+    # "@El Peluca Milei" no es un handle: armar la URL tal cual da un link roto
+    # (https://www.tiktok.com/@El Peluca Milei). Mejor sin link que con uno inválido.
+    assert run._author_url("@El Peluca Milei", "tiktok") == ""
+    assert run._author_url("@Jorge Monta 55", "twitter") == ""
+
+
+def test_author_url_rechaza_handle_truncado():
+    # Nombres cortados por la UI ("@algo…", "@algo...") no son handles válidos.
+    assert run._author_url("@pampabrea…", "tiktok") == ""
+    assert run._author_url("@ElPeluca...", "tiktok") == ""
+
+
+def test_author_url_acepta_handle_limpio_con_punto():
+    assert run._author_url("@fan.oficial", "instagram") == "https://www.instagram.com/fan.oficial/"
+    assert run._author_url("@libertad_2026", "twitter") == "https://x.com/libertad_2026"
+
+
 def test_capturar_candidato_rota_ante_sesion_invalida(tmp_path, monkeypatch):
     pool = {"cuentas": [
         {"alias": "muerta", "estado": "activa", "ultima_vez": "", "notas": ""},
