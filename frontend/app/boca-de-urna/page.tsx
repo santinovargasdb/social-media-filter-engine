@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import UrnaParamsBar from "@/components/urna/UrnaParamsBar";
 import DisclaimerBanner from "@/components/urna/DisclaimerBanner";
 import {
@@ -11,6 +11,8 @@ import SentimentBarChart from "@/components/urna/SentimentBarChart";
 import EvidencePanel from "@/components/urna/EvidencePanel";
 import ComparisonTable from "@/components/urna/ComparisonTable";
 import EvolutionChart from "@/components/urna/EvolutionChart";
+import InfoTip from "@/components/urna/InfoTip";
+import WarningsDetails from "@/components/urna/WarningsDetails";
 
 const DEFAULT_DISCLAIMER =
   "Este indicador refleja el clima de conversación en redes sociales sobre publicaciones públicas indexadas. No es una muestra representativa del electorado ni una proyección de resultado electoral. Sirve como termómetro direccional, complementario a las encuestas de consultoras.";
@@ -28,13 +30,22 @@ export default function BocaDeUrnaPage() {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<UrnaProgress | null>(null);
   const [historial, setHistorial] = useState<UrnaHistorialPunto[]>([]);
+  const [avisosOpen, setAvisosOpen] = useState(false);
+  const avisosRef = useRef<HTMLDetailsElement>(null);
+
+  const abrirAvisos = useCallback(() => {
+    setAvisosOpen(true);
+    // Esperar el render del <details open> antes de scrollear.
+    requestAnimationFrame(() =>
+      avisosRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }, []);
 
   // La evolución sale de los snapshots guardados: se carga al entrar, sin
   // necesidad de correr un análisis (fetchUrnaHistorial devuelve [] si falla).
   useEffect(() => { fetchUrnaHistorial().then(setHistorial); }, []);
 
   const run = useCallback(async (req: UrnaRequest) => {
-    setLoading(true); setError(null); setProgress({ phase: "Iniciando…", pct: 0 }); setData(null);
+    setLoading(true); setError(null); setProgress({ phase: "Iniciando…", pct: 0 }); setData(null); setAvisosOpen(false);
     try {
       const res = await runBocaDeUrnaAsync(req, (p: UrnaProgress) => setProgress(p));
       setData(res);
@@ -71,19 +82,24 @@ export default function BocaDeUrnaPage() {
         )}
         {data && (
           <>
-            {data.meta.ultima_actualizacion && (
-              <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "10px",
-                display: "inline-flex", alignItems: "center", gap: "6px", padding: "4px 10px",
-                borderRadius: "var(--radius-sm)", background: "rgba(127,127,127,0.08)" }}>
-                🕒 Última actualización: {fmtFecha(data.meta.ultima_actualizacion)}
-              </div>
-            )}
-            {data.meta.warnings.length > 0 && (
-              <ul style={{ margin: "0 0 16px", padding: "10px 14px 10px 30px", fontSize: "12px",
-                borderRadius: "var(--radius-sm)", background: "rgba(127,127,127,0.08)", color: "var(--text-secondary)" }}>
-                {data.meta.warnings.map((w, i) => <li key={i}>{w}</li>)}
-              </ul>
-            )}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", marginBottom: "12px" }}>
+              {data.meta.ultima_actualizacion && (
+                <span style={{ fontSize: "12px", color: "var(--text-secondary)",
+                  display: "inline-flex", alignItems: "center", gap: "6px", padding: "4px 10px",
+                  borderRadius: "var(--radius-sm)", background: "rgba(127,127,127,0.08)" }}>
+                  🕒 Última actualización: {fmtFecha(data.meta.ultima_actualizacion)}
+                </span>
+              )}
+              {data.meta.warnings.length > 0 && (
+                <button type="button" onClick={abrirAvisos}
+                  style={{ fontSize: "12px", color: "var(--text-secondary)", cursor: "pointer",
+                    display: "inline-flex", alignItems: "center", gap: "6px", padding: "4px 10px",
+                    borderRadius: "var(--radius-sm)", background: "rgba(127,127,127,0.08)",
+                    border: "1px solid var(--border-color)" }}>
+                  ⓘ {data.meta.warnings.length} aviso{data.meta.warnings.length === 1 ? "" : "s"}
+                </button>
+              )}
+            </div>
             <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "12px" }}>
               {data.meta.total_posts} publicaciones analizadas · {data.meta.posts_electorales} electorales
               {data.meta.bloques && data.meta.bloques.length > 0 && (
@@ -107,7 +123,25 @@ export default function BocaDeUrnaPage() {
                 </div>
               </section>
               <section style={{ minWidth: 0 }}>
-                <h3 style={{ fontSize: "14px", marginBottom: "10px" }}>Redes vs consultoras</h3>
+                <h3 style={{ fontSize: "14px", marginBottom: "10px",
+                  display: "flex", alignItems: "center", gap: "7px" }}>
+                  Redes vs consultoras
+                  <InfoTip label="Qué significan estos números">
+                    <strong>Apoyo en redes:</strong> de cada 100 menciones positivas que
+                    encontramos, cuántas se lleva cada candidato. Es lo comparable con la
+                    intención de voto de una encuesta.
+                    <br /><br />
+                    <strong>Columnas de consultoras:</strong> lo que midió cada una. El número
+                    entre paréntesis es la <em>brecha</em> con redes, en puntos.
+                    <br /><br />
+                    <strong>Colores de la brecha:</strong>{" "}
+                    <span style={{ color: "#4CAF50" }}>verde</span> = coinciden (≤3 pts),{" "}
+                    <span style={{ color: "#FFC107" }}>amarillo</span> = moderada (≤8),{" "}
+                    <span style={{ color: "#F87171" }}>rojo</span> = grande (&gt;8).
+                    <br /><br />
+                    Es un termómetro de conversación en redes, <strong>no una encuesta</strong>.
+                  </InfoTip>
+                </h3>
                 <ComparisonTable comparacion={data.comparacion}
                                  basePositivas={data.candidatos.reduce((s, c) => s + c.pos, 0)} />
               </section>
@@ -123,6 +157,10 @@ export default function BocaDeUrnaPage() {
             </div>
             <EvolutionChart historial={historial} />
           </div>
+        )}
+        {data && (
+          <WarningsDetails ref={avisosRef} warnings={data.meta.warnings}
+                           open={avisosOpen} onToggle={setAvisosOpen} />
         )}
       </div>
     </main>

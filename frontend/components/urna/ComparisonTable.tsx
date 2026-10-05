@@ -63,17 +63,15 @@ export default function ComparisonTable({ comparacion, basePositivas }:
       </table>
       <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "8px" }}>
         {esApoyo ? (
-          <>
-            «Apoyo en redes» = porción de las menciones positivas del corpus que se lleva cada
-            candidato{typeof basePositivas === "number" ? ` (sobre ${basePositivas} menciones positivas)` : ""},
-            comparable con la intención de voto. La brecha sigue siendo termómetro, no encuesta.{" "}
-          </>
+          typeof basePositivas === "number"
+            ? <>«Apoyo en redes» calculado sobre {basePositivas} menciones positivas. </>
+            : null
         ) : (
-          <>Sin menciones positivas en el corpus: la columna «Redes» muestra share de menciones (volumen de conversación).{" "}</>
+          <>Sin menciones positivas en el corpus: la columna «Redes» muestra share de menciones (volumen de conversación). </>
         )}
-        Datos de consultoras extraídos automáticamente de fuentes públicas. Tocá el{" "}
+        Tocá el{" "}
         <span style={{ color: "var(--smata-green-light, #4CAF50)", fontWeight: 700 }}>↗</span>{" "}
-        que aparece junto a cada porcentaje para abrir la nota de origen y verificarlo.
+        junto a cada porcentaje para abrir la nota de la consultora y verificarla.
       </p>
     </div>
   );
