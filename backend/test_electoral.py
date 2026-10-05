@@ -175,6 +175,45 @@ def test_build_evidence_ordena_por_confianza_y_adjunta_post():
     assert ev[0]["candidato"] == "Milei"
 
 
+def _mencion(pid, red, conf, cita):
+    return (
+        {"id": pid, "cita": cita, "candidatos": [{"nombre": "Milei", "postura": "a_favor", "confianza": conf}]},
+        {pid: {"text": cita, "network": red, "post_url": "", "author": "", "author_url": "", "date": ""}},
+    )
+
+
+def test_build_evidence_garantiza_una_cita_de_instagram_por_candidato():
+    # 5 menciones X/TikTok de alta confianza + 1 de IG más floja. Con el cap de 5,
+    # la de IG quedaría afuera; debe entrar igual (una IG garantizada por candidato)
+    # desplazando a la de MENOR confianza de las no-IG, sin pasarse del cap.
+    analysis, posts_by_id = [], {}
+    for i, cf in enumerate([0.95, 0.9, 0.85, 0.8, 0.75]):
+        a, p = _mencion(f"P{i}", "twitter" if i % 2 else "tiktok", cf, f"nolg{i}")
+        analysis.append(a); posts_by_id.update(p)
+    a, p = _mencion("IG", "instagram", 0.5, "citaIG")
+    analysis.append(a); posts_by_id.update(p)
+
+    milei = [e for e in el.build_evidence(analysis, posts_by_id, por_candidato=5)
+             if e["candidato"] == "Milei"]
+    assert len(milei) == 5                                   # se respeta el cap
+    assert "instagram" in [e["post"]["network"] for e in milei]   # IG entró
+    citas = [e["cita"] for e in milei]
+    assert "citaIG" in citas
+    assert "nolg4" not in citas                              # desplazó a la más floja
+    assert "nolg0" in citas                                  # las fuertes siguen
+
+
+def test_build_evidence_sin_instagram_no_fuerza_nada():
+    analysis, posts_by_id = [], {}
+    for i, cf in enumerate([0.95, 0.9, 0.85, 0.8, 0.75, 0.7]):
+        a, p = _mencion(f"P{i}", "twitter" if i % 2 else "tiktok", cf, f"c{i}")
+        analysis.append(a); posts_by_id.update(p)
+    milei = [e for e in el.build_evidence(analysis, posts_by_id, por_candidato=5)
+             if e["candidato"] == "Milei"]
+    assert len(milei) == 5
+    assert "c5" not in [e["cita"] for e in milei]            # la 6.ª (más floja) afuera, sin cambios
+
+
 def test_compare_calcula_gap_y_promedio():
     candidatos = [{"nombre": "Javier Milei", "pct": 44.0, "pos": 0, "neg": 0, "neu": 0, "menciones": 0}]
     rows = [

@@ -285,7 +285,13 @@ def aggregate_net_sentiment(analysis: list[dict]) -> tuple[list[dict], int]:
 
 def build_evidence(analysis: list[dict], posts_by_id: dict[str, dict], por_candidato: int = 5) -> list[dict]:
     """Empareja cada mención (conf >= CONF_MIN) con su post + cita, ordenada por
-    confianza desc, capando a `por_candidato` citas por candidato."""
+    confianza desc, capando a `por_candidato` citas por candidato.
+
+    Garantía de Instagram: si un candidato tiene alguna cita de IG pero ninguna
+    entró en su top por confianza, se intercambia la de MENOR confianza del top por
+    la mejor de IG. IG suele puntuar más bajo que X/TikTok (imagen/epígrafe, postura
+    menos explícita) y quedaba sistemáticamente fuera de la muestra aunque aportara
+    menciones — así la evidencia refleja que la red estuvo presente."""
     _POST_FIELDS = ("network", "author", "author_url", "text", "post_url", "date")
     filas: list[tuple[float, dict]] = []
     for item in analysis:
@@ -302,15 +308,25 @@ def build_evidence(analysis: list[dict], posts_by_id: dict[str, dict], por_candi
                 "post": post_subset,
             }))
     filas.sort(key=lambda t: t[0], reverse=True)
-    vistos: dict[str, int] = {}
-    evidencia: list[dict] = []
-    for _conf, fila in filas:
-        key = canonical_key(fila["candidato"])
-        if vistos.get(key, 0) >= por_candidato:
-            continue
-        vistos[key] = vistos.get(key, 0) + 1
-        evidencia.append(fila)
-    return evidencia
+
+    # Agrupar por candidato (preservando el orden por confianza) y capar a por_candidato.
+    por_cand: dict[str, list[tuple[float, dict]]] = {}
+    for conf, fila in filas:
+        por_cand.setdefault(canonical_key(fila["candidato"]), []).append((conf, fila))
+
+    seleccion: list[tuple[float, dict]] = []
+    for items in por_cand.values():
+        top = items[:por_candidato]
+        hay_ig = any(f["post"].get("network") == "instagram" for _c, f in top)
+        if not hay_ig and top:
+            mejor_ig = next(((c, f) for c, f in items
+                             if f["post"].get("network") == "instagram"), None)
+            if mejor_ig is not None:
+                top = top[:-1] + [mejor_ig]   # desplaza la de menor confianza
+        seleccion.extend(top)
+
+    seleccion.sort(key=lambda t: t[0], reverse=True)
+    return [fila for _conf, fila in seleccion]
 
 
 def _keys_match(key_redes: str, key_csv: str) -> bool:
