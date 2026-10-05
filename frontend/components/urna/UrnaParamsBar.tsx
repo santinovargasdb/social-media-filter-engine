@@ -19,8 +19,12 @@ function hoyISO(): string {
     .toISOString().slice(0, 10);
 }
 
+// País fijo: es un monitor de elecciones argentinas. Solo lo usaba la búsqueda
+// automática de consultoras (geo del buscador), que siempre apunta a Argentina;
+// tener un campo editable "ar" confundía (en modo stored el resto no lo mira).
+const COUNTRY = "ar";
+
 export default function UrnaParamsBar({ loading, onRun }: Props) {
-  const [country, setCountry] = useState("ar");
   const [date, setDate] = useState("");
   const hoy = hoyISO();
   const [csvText, setCsvText] = useState("");
@@ -52,7 +56,7 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
       networks: ALL_NETWORKS,
       // Doble cerrojo contra fechas futuras (el max del input se puede tipear por encima).
       date: date && date <= hoy ? date : null,
-      country: country.trim().toLowerCase() || "ar",
+      country: COUNTRY,
       pollster_csv: csvText,
       auto_consultoras: autoConsultoras,
     });
@@ -73,8 +77,6 @@ export default function UrnaParamsBar({ loading, onRun }: Props) {
             title="Tema fijo del motor: solo analiza la conversación electoral">
         Buscando: &ldquo;elecciones presidenciales&rdquo;
       </span>
-      <input style={{ ...field, width: "70px" }} value={country}
-             onChange={(e) => setCountry(e.target.value)} placeholder="país" title="Código ISO (ar, br, ...)" />
       <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "var(--text-secondary)" }}
            title="Ver el análisis guardado de ese día (vacío = el último disponible)">
         <span>Día:</span>

@@ -70,7 +70,7 @@ export default function BocaDeUrnaPage() {
               <div style={{ width: `${Math.max(3, progress.pct)}%`, height: "100%", background: "#3B82F6", transition: "width 0.4s ease" }} />
             </div>
             <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "6px" }}>
-              El análisis corre en segundo plano y puede tardar 2-4 minutos. No cierres esta pestaña.
+              Cargando el análisis guardado del scraper. Puede demorar unos segundos.
             </div>
           </div>
         )}
