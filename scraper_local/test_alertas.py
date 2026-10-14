@@ -23,7 +23,9 @@ def test_red_en_cero_alerta():
 
 
 def test_muchos_avisos_alerta():
-    assert alertas.evaluar(_base(warnings_total=23)) is not None
+    v = alertas.evaluar(_base(warnings_total=23))
+    assert v is not None and v["nivel"] == "alerta"
+    assert "23 avisos" in v["mensaje"]
 
 
 def test_exit_code_1_alerta():
@@ -55,4 +57,7 @@ def test_solo_twitter_en_cero_alerta():
 def test_varios_motivos_se_concatenan():
     v = alertas.evaluar(_base(exit_code=1, warnings_total=30,
                               posts_por_red={"twitter": 0}))
-    assert v["mensaje"].count(".") >= 2  # al menos tres motivos, uno por frase
+    # tres motivos distintos concatenados: fallo de tablero, red en 0 y avisos
+    assert "No se pudo actualizar el tablero" in v["mensaje"]
+    assert "twitter" in v["mensaje"]
+    assert "30 avisos" in v["mensaje"]

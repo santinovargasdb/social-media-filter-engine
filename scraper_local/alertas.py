@@ -29,8 +29,9 @@ def evaluar(resultado: dict, umbral_warnings: int = 8) -> dict | None:
     if quemadas:
         motivos.append(f"{len(quemadas)} cuenta(s) quemada(s) en esta corrida.")
 
-    if (resultado.get("warnings_total") or 0) >= umbral_warnings:
-        motivos.append(f"{resultado['warnings_total']} avisos en la corrida.")
+    total_avisos = resultado.get("warnings_total") or 0
+    if total_avisos >= umbral_warnings:
+        motivos.append(f"{total_avisos} avisos en la corrida.")
 
     if not motivos:
         return None
