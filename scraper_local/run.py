@@ -37,10 +37,12 @@ import redes  # noqa: E402
 import vision  # noqa: E402
 import electoral  # noqa: E402
 import store  # noqa: E402
+import alertas  # noqa: E402
 
 RUTA_CONFIG = BASE_DIR / "config.json"
 DIR_CAPTURAS = BASE_DIR / "capturas"
 DIR_LOGS = BASE_DIR / "logs"
+DIR_RESULTADOS = DIR_LOGS / "resultados"
 LOCK_PATH = BASE_DIR / ".run.lock"
 
 log = logging.getLogger("urna.scraper")
@@ -254,6 +256,48 @@ def _limpiar_corridas_viejas(conservar: int) -> None:
         shutil.rmtree(vieja, ignore_errors=True)
 
 
+def _armar_resultado(runid, redes_corridas, exit_code, posts_por_red,
+                     warnings_finales, posts_electorales, umbral_warnings):
+    """Arma el dict de resultado de una corrida y le pega el veredicto de alertas."""
+    cuentas_quemadas = [w for w in warnings_finales if "marcada como quemada" in w]
+    resultado = {
+        "runid": runid,
+        "fin_utc": datetime.now(timezone.utc).isoformat(),
+        "redes": list(redes_corridas),
+        "exit_code": exit_code,
+        "posts_por_red": dict(posts_por_red),
+        "warnings_total": len(warnings_finales),
+        "cuentas_quemadas": cuentas_quemadas,
+        "posts_electorales": posts_electorales,
+    }
+    veredicto = alertas.evaluar(resultado, umbral_warnings=umbral_warnings)
+    resultado["nivel"] = veredicto["nivel"] if veredicto else "ok"
+    resultado["titulo"] = veredicto["titulo"] if veredicto else ""
+    resultado["mensaje"] = veredicto["mensaje"] if veredicto else ""
+    return resultado
+
+
+def _podar_resultados(conservar: int) -> None:
+    """Deja sólo los últimos N json de resultados (son chicos; evita acumular)."""
+    if conservar <= 0 or not DIR_RESULTADOS.exists():
+        return
+    archivos = sorted(DIR_RESULTADOS.glob("*.json"), key=lambda p: p.name)
+    for viejo in archivos[:-conservar]:
+        viejo.unlink(missing_ok=True)
+
+
+def _escribir_resultado(resultado: dict) -> None:
+    """Escribe logs/resultados/<runid>.json. Nunca rompe la corrida."""
+    try:
+        DIR_RESULTADOS.mkdir(parents=True, exist_ok=True)
+        ruta = DIR_RESULTADOS / f"{resultado['runid']}.json"
+        ruta.write_text(json.dumps(resultado, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+        _podar_resultados(60)
+    except Exception:
+        log.exception("No se pudo escribir el resultado de la corrida (se ignora).")
+
+
 def correr(cfg: dict, dry_run: bool = False) -> int:
     inicio = datetime.now(timezone.utc)
     carpeta = DIR_CAPTURAS / inicio.strftime("%Y%m%d-%H%M")
@@ -261,6 +305,7 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
     candidatos = cfg.get("candidatos") or electoral.CANDIDATOS_DEFAULT
 
     bloques: list[dict] = []
+    posts_por_red: dict[str, int] = {}
     for red_nombre in cfg["redes"]:
         if red_nombre not in redes.POR_NOMBRE:
             warnings.append(f"Red desconocida en config: '{red_nombre}' (se saltea).")
@@ -283,6 +328,7 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
                 browser.esperar_aleatorio(tuple(cfg["espera_entre_candidatos"]))
         accounts.guardar_pool(pool, red=red_nombre)
         posts_red = dedup.dedup_posts(crudos_red)
+        posts_por_red[red_nombre] = len(posts_red)
         log.info("[%s] Posts: %d crudos, %d tras dedup, %d errores de lectura.",
                  red_nombre, len(crudos_red), len(posts_red), errores)
         bloques.append(armar_bloque(posts_red, red_nombre, busquedas=len(candidatos),
@@ -290,22 +336,31 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
 
     payload = armar_payload(bloques, warnings)
     pe = payload["meta"]["posts_electorales"]
+    warnings_finales = payload["meta"]["warnings"]
 
     if dry_run:
         log.info("[dry-run] NO se sube el snapshot.")
         print(json.dumps(payload["meta"], ensure_ascii=False, indent=2))
         return 0
+
+    exit_code = 0
     if pe < cfg["min_posts_electorales"]:
         log.error("Solo %d post(s) electoral(es) (mínimo %d): NO se pisa el snapshot anterior.",
                   pe, cfg["min_posts_electorales"])
-        return 1
-    if not store.write_snapshot(payload, inicio.isoformat()):
+        exit_code = 1
+    elif not store.write_snapshot(payload, inicio.isoformat()):
         log.error("La subida a Supabase falló: el snapshot anterior queda vigente.")
-        return 1
-    log.info("Snapshot subido: %d candidatos, %d posts electorales, %d warnings.",
-             len(payload["candidatos"]), pe, len(payload["meta"]["warnings"]))
-    _limpiar_corridas_viejas(cfg["conservar_corridas"])
-    return 0
+        exit_code = 1
+    else:
+        log.info("Snapshot subido: %d candidatos, %d posts electorales, %d warnings.",
+                 len(payload["candidatos"]), pe, len(warnings_finales))
+        _limpiar_corridas_viejas(cfg["conservar_corridas"])
+
+    umbral = (cfg.get("alertas") or {}).get("umbral_warnings", 8)
+    resultado = _armar_resultado(inicio.strftime("%Y%m%d-%H%M"), cfg["redes"].keys(),
+                                 exit_code, posts_por_red, warnings_finales, pe, umbral)
+    _escribir_resultado(resultado)
+    return exit_code
 
 
 def main(argv=None) -> int:
@@ -332,6 +387,20 @@ def main(argv=None) -> int:
         log.error("No arranco: %s. Ya hay una corrida en curso; evito colisionar "
                   "por las cuentas y la RAM.", e)
         return 2
+    except Exception:
+        log.exception("La corrida crasheó sin terminar.")
+        if not args.dry_run:
+            runid = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+            _escribir_resultado({
+                "runid": runid,
+                "fin_utc": datetime.now(timezone.utc).isoformat(),
+                "redes": list(cfg.get("redes", {})),
+                "exit_code": 1, "posts_por_red": {}, "warnings_total": 0,
+                "cuentas_quemadas": [], "posts_electorales": 0,
+                "nivel": "alerta", "titulo": alertas.TITULO,
+                "mensaje": "La corrida crasheó, revisá el log.",
+            })
+        return 1
 
 
 if __name__ == "__main__":

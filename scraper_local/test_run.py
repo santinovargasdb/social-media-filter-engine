@@ -344,3 +344,70 @@ def test_correr_multi_red_tres_bloques(monkeypatch, tmp_path):
     assert rc == 0 and len(escritos) == 1
     assert [b["red"] for b in escritos[0]["meta"]["bloques"]] == ["twitter", "tiktok", "instagram"]
     assert escritos[0]["candidatos"][0]["por_red"] == {"twitter": 1, "tiktok": 1, "instagram": 1}
+
+
+def test_armar_resultado_sano_es_ok():
+    r = run._armar_resultado("20261013-1903", ["twitter", "tiktok", "instagram"],
+                             exit_code=0, posts_por_red={"twitter": 116, "tiktok": 319,
+                             "instagram": 47}, warnings_finales=["x", "y"],
+                             posts_electorales=332, umbral_warnings=8)
+    assert r["nivel"] == "ok" and r["mensaje"] == "" and r["runid"] == "20261013-1903"
+    assert r["warnings_total"] == 2 and r["cuentas_quemadas"] == []
+    assert r["fin_utc"].endswith("+00:00")
+
+
+def test_armar_resultado_tiktok_cero_es_alerta():
+    r = run._armar_resultado("20261007-1900", ["twitter", "tiktok", "instagram"],
+                             exit_code=0, posts_por_red={"twitter": 79, "tiktok": 0,
+                             "instagram": 38}, warnings_finales=["a"] * 19,
+                             posts_electorales=78, umbral_warnings=8)
+    assert r["nivel"] == "alerta" and "tiktok" in r["mensaje"]
+
+
+def test_armar_resultado_detecta_cuenta_quemada():
+    r = run._armar_resultado("20261005-1900", ["twitter"], exit_code=0,
+                             posts_por_red={"twitter": 90},
+                             warnings_finales=["[twitter] Cuenta 'cuenta1' marcada como quemada."],
+                             posts_electorales=90, umbral_warnings=8)
+    assert r["cuentas_quemadas"] == ["[twitter] Cuenta 'cuenta1' marcada como quemada."]
+    assert r["nivel"] == "alerta"
+
+
+def test_escribir_resultado_crea_json_y_poda(tmp_path, monkeypatch):
+    monkeypatch.setattr(run, "DIR_RESULTADOS", tmp_path / "resultados")
+    for i in range(63):
+        run._escribir_resultado({"runid": f"202610{i:02d}-1200", "nivel": "ok"})
+    quedan = sorted((tmp_path / "resultados").glob("*.json"))
+    assert len(quedan) == 60  # podó las 3 más viejas
+    assert (tmp_path / "resultados" / "20261062-1200.json").exists()
+
+
+def test_correr_feliz_escribe_resultado_ok(monkeypatch, tmp_path):
+    escritos = []
+    _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
+    monkeypatch.setattr(run, "DIR_RESULTADOS", tmp_path / "resultados")
+    run.correr(_cfg(candidatos=["Javier Milei"]), dry_run=False)
+    jsons = list((tmp_path / "resultados").glob("*.json"))
+    assert len(jsons) == 1
+    data = json.loads(jsons[0].read_text(encoding="utf-8"))
+    assert data["exit_code"] == 0 and data["nivel"] == "ok"
+    assert data["posts_por_red"]["twitter"] >= 1
+
+
+def test_correr_dry_run_no_escribe_resultado(monkeypatch, tmp_path):
+    escritos = []
+    _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
+    monkeypatch.setattr(run, "DIR_RESULTADOS", tmp_path / "resultados")
+    run.correr(_cfg(candidatos=["Javier Milei"]), dry_run=True)
+    assert not (tmp_path / "resultados").exists()
+
+
+def test_correr_falla_subida_escribe_alerta(monkeypatch, tmp_path):
+    escritos = []
+    _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
+    monkeypatch.setattr(run, "DIR_RESULTADOS", tmp_path / "resultados")
+    monkeypatch.setattr(run.store, "write_snapshot", lambda payload, generado_en: False)
+    rc = run.correr(_cfg(candidatos=["Javier Milei"]), dry_run=False)
+    assert rc == 1
+    data = json.loads(next((tmp_path / "resultados").glob("*.json")).read_text(encoding="utf-8"))
+    assert data["exit_code"] == 1 and data["nivel"] == "alerta"
