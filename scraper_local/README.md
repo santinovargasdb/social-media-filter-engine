@@ -147,7 +147,7 @@ Claves de TikTok:
 > ~56 llamadas extra a Gemini visión; el total del día queda ~128, bajo el techo medido
 > el 2026-09-23 para el free-tier. Twitter + TikTok en la misma corrida de las 16:00.
 
-**Task Scheduler** — dos tareas (con la PC prendida). Agregá `-ExecutionPolicy Bypass`
+**Task Scheduler** — tres tareas (con la PC prendida). Agregá `-ExecutionPolicy Bypass`
 SOLO si la política de la máquina bloquea scripts locales (con RemoteSigned no hace falta):
 
 | Hora | Nombre de tarea | Comando |
