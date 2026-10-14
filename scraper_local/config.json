@@ -26,6 +26,7 @@
     }
   },
   "candidatos": null,
+  "alertas": { "umbral_warnings": 8 },
   "espera_entre_scrolls": [2, 5],
   "espera_entre_candidatos": [20, 40],
   "viewport": [950, 1300],

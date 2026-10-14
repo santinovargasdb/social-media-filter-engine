@@ -152,10 +152,20 @@ SOLO si la política de la máquina bloquea scripts locales (con RemoteSigned no
 
 | Hora | Nombre de tarea | Comando |
 |------|-----------------|---------|
+| 09:00 | SMATA Boca de Urna - Aviso matutino (9h) | `powershell -NoProfile -File "<ruta>\scraper_local\aviso-matutino.ps1"` |
 | 10:00 | SMATA Boca de Urna - Twitter (10h) | `powershell -NoProfile -File "<ruta>\scraper_local\run.ps1" -Redes twitter` |
 | 16:00 | SMATA Boca de Urna - Twitter+TikTok (16h) | `powershell -NoProfile -File "<ruta>\scraper_local\run.ps1" -Redes twitter,tiktok,instagram` |
 
 Config editable en `config.json` (scrolls, esperas, candidatos, mínimo de posts para subir).
+
+> [!note] Aviso matutino
+> La tarea de las **09:00** muestra un cartel a pantalla completa SOLO si alguna
+> corrida salió degradada/fallida desde la última vez que lo cerraste (red en 0,
+> cuenta quemada, subida fallida, ≥8 avisos, o si no hubo corrida en ~20 h). Si
+> estuvo todo bien, no aparece nada. Debe ser **LogonType Interactive** (usuario
+> logueado): la ventana necesita escritorio real. El umbral de avisos se ajusta en
+> `config.json` → `alertas.umbral_warnings`. Probarlo sin esperar una falla:
+> `aviso-matutino.ps1 -Simular`.
 
 > [!warning] TikTok corre con browser VISIBLE
 > En headless TikTok sirve un captcha-slider ("Drag the slider to fit the puzzle")
