@@ -57,7 +57,7 @@ if ($Simular) {
 
 $ultimoVisto = [datetime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
 if (Test-Path $marcador) {
-    try { $ultimoVisto = ([datetime]((Get-Content $marcador -Raw).Trim())).ToUniversalTime() } catch {}
+    try { $ultimoVisto = ([datetime]((Get-Content $marcador -Raw).Trim())).ToUniversalTime() } catch { }  # marcador corrupto -> queda en epoch, reaparecen las alertas (falla segura)
 }
 
 $ahora = (Get-Date).ToUniversalTime()
@@ -85,4 +85,5 @@ if ($lineas.Count -eq 0) { return }   # todo bien: no molestar
 
 Show-Cartel -Lineas $lineas
 # Marcar "visto" SOLO despues de cerrar el cartel (si se mata el script, reaparece)
+if (-not (Test-Path $dirResultados)) { New-Item -ItemType Directory -Path $dirResultados -Force | Out-Null }
 $ahora.ToString("o") | Set-Content -Path $marcador -Encoding utf8
