@@ -256,6 +256,14 @@ def _limpiar_corridas_viejas(conservar: int) -> None:
         shutil.rmtree(vieja, ignore_errors=True)
 
 
+def _umbral_de(cfg: dict) -> int:
+    """Umbral de avisos del config; default 8 si falta o está malformado."""
+    alertas_cfg = cfg.get("alertas")
+    if isinstance(alertas_cfg, dict):
+        return alertas_cfg.get("umbral_warnings", 8)
+    return 8
+
+
 def _armar_resultado(runid, redes_corridas, exit_code, posts_por_red,
                      warnings_finales, posts_electorales, umbral_warnings):
     """Arma el dict de resultado de una corrida y le pega el veredicto de alertas."""
@@ -356,7 +364,7 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
                  len(payload["candidatos"]), pe, len(warnings_finales))
         _limpiar_corridas_viejas(cfg["conservar_corridas"])
 
-    umbral = (cfg.get("alertas") or {}).get("umbral_warnings", 8)
+    umbral = _umbral_de(cfg)
     resultado = _armar_resultado(inicio.strftime("%Y%m%d-%H%M"), cfg["redes"].keys(),
                                  exit_code, posts_por_red, warnings_finales, pe, umbral)
     _escribir_resultado(resultado)

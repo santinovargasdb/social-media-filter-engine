@@ -411,3 +411,11 @@ def test_correr_falla_subida_escribe_alerta(monkeypatch, tmp_path):
     assert rc == 1
     data = json.loads(next((tmp_path / "resultados").glob("*.json")).read_text(encoding="utf-8"))
     assert data["exit_code"] == 1 and data["nivel"] == "alerta"
+
+
+def test_umbral_de_default_y_config():
+    assert run._umbral_de({}) == 8
+    assert run._umbral_de({"alertas": {"umbral_warnings": 4}}) == 4
+    assert run._umbral_de({"alertas": {}}) == 8
+    assert run._umbral_de({"alertas": 8}) == 8       # malformado -> default, no crash
+    assert run._umbral_de({"alertas": None}) == 8
