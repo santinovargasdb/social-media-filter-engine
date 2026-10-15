@@ -1,6 +1,21 @@
 # Monitor de Medios SMATA
 
-Monitor institucional de medios y redes sociales para el Departamento de Prensa de SMATA (sindicato automotriz argentino). Busca publicaciones en X/Twitter, Instagram y TikTok, las puntúa por relevancia con IA y arma informes en Word.
+> Monitor institucional de medios y redes para el Departamento de Prensa de SMATA (sindicato automotriz argentino): rastrea X, Instagram y TikTok, puntúa relevancia con IA (Gemini) y arma informes en Word. Suma un módulo electoral de "boca de urna" y un scraper por visión.
+
+[![Demo en vivo](https://img.shields.io/badge/▶_demo-en_vivo-2ea44f?style=for-the-badge)](https://filtro-redes-sociales-smt.vercel.app)
+&nbsp;
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?logo=supabase&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini-8E75B2?logo=googlegemini&logoColor=white)
+
+**🔗 Demo:** https://filtro-redes-sociales-smt.vercel.app
+
+<!-- 📸 CAPTURAS: arrastrá una imagen directo acá en el editor web de GitHub y pega la URL que genera, o guardá en docs/screenshots/ y descomentá: -->
+<!-- ![Panel de monitoreo](docs/screenshots/panel.png) -->
+
+**Destacados:** scoring con cascada de modelos Gemini + rotación de API key por cuota · dedup con Jaccard calibrado sobre casos reales · scraper por visión con Playwright ante anti-bot · ~270 tests.
 
 ## Stack técnico
 
