@@ -43,6 +43,8 @@ RUTA_CONFIG = BASE_DIR / "config.json"
 DIR_CAPTURAS = BASE_DIR / "capturas"
 DIR_LOGS = BASE_DIR / "logs"
 DIR_RESULTADOS = DIR_LOGS / "resultados"
+ESPERA_REINTENTO = (20, 30)        # seg: espera antes de reintentar la misma cuenta ante challenge
+UMBRAL_CORTE_CHALLENGES = 3        # challenges consecutivos por red antes de dejar de reintentar
 LOCK_PATH = BASE_DIR / ".run.lock"
 
 log = logging.getLogger("urna.scraper")
@@ -208,41 +210,54 @@ def armar_payload(bloques: list[dict], warnings: list[str]) -> dict:
 
 
 def capturar_candidato(red_nombre: str, cfg: dict, pool: dict, candidato: str,
-                       carpeta: Path, warnings: list[str]) -> list[dict]:
+                       carpeta: Path, warnings: list[str],
+                       estado_red: dict | None = None) -> list[dict]:
     """Capturas de UN candidato en UNA red, rotando la cuenta UNA vez si se quema.
-    Solo el redirect a login (SesionInvalidaError) quema; captcha/timeout
-    (DesafioTemporalError) saltea el candidato sin tocar la cuenta.
-    Devuelve [] si no se pudo (el resto de la corrida sigue)."""
+    Ante challenge (DesafioTemporalError) reintenta UNA vez con la MISMA cuenta tras una
+    espera: el challenge es a la IP, no a la cuenta; rotar chocaría el mismo muro. El
+    redirect a login (SesionInvalidaError) sí quema y rota. `estado_red` lleva los
+    challenges consecutivos de la red en la corrida: al llegar a UMBRAL_CORTE_CHALLENGES
+    se asume bloqueo de IP y se saltea rápido, sin reintentar. Devuelve [] si no se pudo."""
     red_mod = redes.POR_NOMBRE[red_nombre]
-    for _intento in range(2):  # cuenta actual + una rotación
+    if estado_red is None:
+        estado_red = {"challenges_consecutivos": 0}
+    estado_red.setdefault("challenges_consecutivos", 0)
+    for _intento in range(2):  # cuenta actual + una rotación ante quema
         cuenta = accounts.proxima_cuenta(pool)
         if cuenta is None:
             warnings.append(f"[{red_nombre}] Sin cuentas activas: '{candidato}' quedó sin capturar.")
             return []
-        try:
-            capturas = red_mod.capturar(
-                sesion=accounts.ruta_sesion(cuenta["alias"], red_nombre), termino=candidato,
-                cfg=cfg, cfg_red=cfg["redes"][red_nombre], carpeta=carpeta,
-                prefijo=f"{red_nombre}-{_slug(candidato)}", warnings=warnings)
-            accounts.registrar_uso(pool, cuenta["alias"])
-            return capturas
-        except browser.DesafioTemporalError as e:
-            # Challenge a la máquina/IP, no a la cuenta: no se quema ni se rota
-            # (la otra cuenta chocaría con el mismo muro desde esta misma IP).
-            log.warning("[%s] Challenge temporal con '%s': %s", red_nombre, candidato, e)
-            warnings.append(f"[{red_nombre}] '{candidato}' salteado por challenge temporal "
-                            f"({e}); la cuenta sigue activa.")
-            return []
-        except browser.SesionInvalidaError as e:
-            log.warning("[%s] Cuenta '%s' quemada/challenge: %s", red_nombre, cuenta["alias"], e)
-            accounts.marcar_quemada(pool, cuenta["alias"])
-            warnings.append(f"[{red_nombre}] Cuenta '{cuenta['alias']}' marcada como quemada.")
-        except Exception as e:
-            # Error inesperado del browser (Playwright caído, sesión ilegible, etc.):
-            # no es evidencia de cuenta quemada — se registra y la corrida sigue.
-            log.error("[%s] Error inesperado capturando '%s': %s", red_nombre, candidato, e)
-            warnings.append(f"[{red_nombre}] '{candidato}' quedó sin capturar (error del navegador: {e}).")
-            return []
+        reintentar = estado_red["challenges_consecutivos"] < UMBRAL_CORTE_CHALLENGES
+        for _reintento in range(2 if reintentar else 1):  # 1er intento (+1 reintento si corresponde)
+            try:
+                capturas = red_mod.capturar(
+                    sesion=accounts.ruta_sesion(cuenta["alias"], red_nombre), termino=candidato,
+                    cfg=cfg, cfg_red=cfg["redes"][red_nombre], carpeta=carpeta,
+                    prefijo=f"{red_nombre}-{_slug(candidato)}", warnings=warnings)
+                accounts.registrar_uso(pool, cuenta["alias"])
+                estado_red["challenges_consecutivos"] = 0  # éxito: resetea el corte
+                return capturas
+            except browser.DesafioTemporalError as e:
+                if _reintento == 0 and reintentar:
+                    log.warning("[%s] Challenge con '%s' (%s); reintento con la misma cuenta "
+                                "en %d-%ds.", red_nombre, candidato, e, *ESPERA_REINTENTO)
+                    browser.esperar_aleatorio(ESPERA_REINTENTO)
+                    continue  # reintenta la MISMA cuenta
+                estado_red["challenges_consecutivos"] += 1
+                log.warning("[%s] Challenge temporal con '%s': %s (se saltea; la cuenta sigue activa).",
+                            red_nombre, candidato, e)
+                warnings.append(f"[{red_nombre}] '{candidato}' salteado por challenge temporal "
+                                f"({e}); la cuenta sigue activa.")
+                return []
+            except browser.SesionInvalidaError as e:
+                log.warning("[%s] Cuenta '%s' quemada/challenge: %s", red_nombre, cuenta["alias"], e)
+                accounts.marcar_quemada(pool, cuenta["alias"])
+                warnings.append(f"[{red_nombre}] Cuenta '{cuenta['alias']}' marcada como quemada.")
+                break  # rompe el reintento → el loop externo rota de cuenta
+            except Exception as e:
+                log.error("[%s] Error inesperado capturando '%s': %s", red_nombre, candidato, e)
+                warnings.append(f"[{red_nombre}] '{candidato}' quedó sin capturar (error del navegador: {e}).")
+                return []
     warnings.append(f"[{red_nombre}] '{candidato}' quedó sin capturar (dos cuentas fallaron).")
     return []
 
@@ -321,9 +336,10 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
         pool = accounts.cargar_pool(red=red_nombre)
         crudos_red: list[dict] = []
         errores = 0
+        estado_red = {"challenges_consecutivos": 0}
         for i, candidato in enumerate(candidatos):
             log.info("[%s] Candidato %d/%d: %s", red_nombre, i + 1, len(candidatos), candidato)
-            capturas = capturar_candidato(red_nombre, cfg, pool, candidato, carpeta, warnings)
+            capturas = capturar_candidato(red_nombre, cfg, pool, candidato, carpeta, warnings, estado_red)
             for cap in capturas:
                 leidos = vision.read_capture(cap["ruta"], red_nombre, candidatos,
                                              contexto=cap["contexto"])

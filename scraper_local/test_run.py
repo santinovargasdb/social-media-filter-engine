@@ -145,10 +145,10 @@ def test_capturar_candidato_rota_ante_sesion_invalida(tmp_path, monkeypatch):
     assert any("quemada" in w for w in warnings)
 
 
-def test_capturar_candidato_challenge_no_quema_ni_rota(tmp_path, monkeypatch):
-    """Captcha/timeout (DesafioTemporalError) NO es evidencia de cuenta muerta:
-    warning + candidato salteado, sin quemar ni rotar — el challenge es de la
-    máquina/IP y la otra cuenta chocaría con el mismo muro."""
+def test_capturar_candidato_challenge_reintenta_sin_quemar_ni_rotar(tmp_path, monkeypatch):
+    """DesafioTemporalError: reintenta UNA vez con la MISMA cuenta (el challenge es a la
+    IP, no a la cuenta). Si persiste: warning + salteado, sin quemar ni rotar a la otra."""
+    monkeypatch.setattr(run.browser, "esperar_aleatorio", lambda rango: None)
     pool = {"cuentas": [
         {"alias": "a", "estado": "activa", "ultima_vez": "", "notas": ""},
         {"alias": "b", "estado": "activa", "ultima_vez": "2026-09-01T00:00:00+00:00", "notas": ""},
@@ -161,9 +161,56 @@ def test_capturar_candidato_challenge_no_quema_ni_rota(tmp_path, monkeypatch):
     warnings = []
     capturas = run.capturar_candidato("twitter", _cfg(), pool, "Javier Milei", tmp_path, warnings)
     assert capturas == []
-    assert usadas == ["a.json"]  # sin rotación
+    assert usadas == ["a.json", "a.json"]  # reintentó la MISMA cuenta, NO rotó a b
     assert all(c["estado"] == "activa" for c in pool["cuentas"])  # nadie quemada
     assert any("challenge" in w for w in warnings)
+
+
+def test_capturar_candidato_reintenta_y_recupera(tmp_path, monkeypatch):
+    monkeypatch.setattr(run.browser, "esperar_aleatorio", lambda rango: None)
+    pool = {"cuentas": [{"alias": "a", "estado": "activa", "ultima_vez": "", "notas": ""}]}
+    llamadas = []
+    def challenge_luego_ok(sesion, termino, cfg, cfg_red, carpeta, prefijo, warnings):
+        llamadas.append(sesion.name)
+        if len(llamadas) == 1:
+            raise browser_mod.DesafioTemporalError("feed lento")
+        return [{"ruta": tmp_path / "cap-1.png", "contexto": ""}]
+    monkeypatch.setattr(twitter, "capturar", challenge_luego_ok)
+    estado = {"challenges_consecutivos": 0}
+    capturas = run.capturar_candidato("twitter", _cfg(), pool, "Milei", tmp_path, [], estado)
+    assert len(capturas) == 1
+    assert llamadas == ["a.json", "a.json"]        # reintentó la MISMA cuenta
+    assert estado["challenges_consecutivos"] == 0  # el éxito resetea el contador
+
+
+def test_capturar_candidato_challenge_persistente_incrementa_contador(tmp_path, monkeypatch):
+    monkeypatch.setattr(run.browser, "esperar_aleatorio", lambda rango: None)
+    pool = {"cuentas": [{"alias": "a", "estado": "activa", "ultima_vez": "", "notas": ""}]}
+    llamadas = []
+    def challenge(sesion, termino, cfg, cfg_red, carpeta, prefijo, warnings):
+        llamadas.append(sesion.name)
+        raise browser_mod.DesafioTemporalError("captcha")
+    monkeypatch.setattr(twitter, "capturar", challenge)
+    estado = {"challenges_consecutivos": 0}
+    capturas = run.capturar_candidato("twitter", _cfg(), pool, "Milei", tmp_path, [], estado)
+    assert capturas == []
+    assert llamadas == ["a.json", "a.json"]        # 1er intento + 1 reintento
+    assert estado["challenges_consecutivos"] == 1
+    assert pool["cuentas"][0]["estado"] == "activa"  # NO quemada
+
+
+def test_capturar_candidato_corte_no_reintenta(tmp_path, monkeypatch):
+    monkeypatch.setattr(run.browser, "esperar_aleatorio", lambda rango: None)
+    pool = {"cuentas": [{"alias": "a", "estado": "activa", "ultima_vez": "", "notas": ""}]}
+    llamadas = []
+    def challenge(sesion, termino, cfg, cfg_red, carpeta, prefijo, warnings):
+        llamadas.append(sesion.name)
+        raise browser_mod.DesafioTemporalError("captcha")
+    monkeypatch.setattr(twitter, "capturar", challenge)
+    estado = {"challenges_consecutivos": 3}  # corte ya activo (bloqueo de IP probable)
+    capturas = run.capturar_candidato("twitter", _cfg(), pool, "Milei", tmp_path, [], estado)
+    assert capturas == []
+    assert llamadas == ["a.json"]  # sin reintento: una sola llamada
 
 
 def test_capturar_candidato_sin_cuentas_devuelve_vacio(tmp_path):
@@ -178,7 +225,7 @@ def _preparar_correr(monkeypatch, tmp_path, posts_por_captura, escritos):
     monkeypatch.setattr(run.accounts, "cargar_pool", lambda ruta=None, red="twitter": pool)
     monkeypatch.setattr(run.accounts, "guardar_pool", lambda p, ruta=None, red="twitter": None)
     monkeypatch.setattr(run, "capturar_candidato",
-                        lambda red_nombre, cfg, pool, cand, carpeta, warnings: [
+                        lambda red_nombre, cfg, pool, cand, carpeta, warnings, estado_red=None: [
                             {"ruta": tmp_path / f"{red_nombre}-{cand}.png", "contexto": ""}])
     monkeypatch.setattr(run.vision, "read_capture",
                         lambda ruta, red, candidatos=None, contexto="": posts_por_captura)
