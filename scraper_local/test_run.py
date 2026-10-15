@@ -211,6 +211,8 @@ def test_capturar_candidato_corte_no_reintenta(tmp_path, monkeypatch):
     capturas = run.capturar_candidato("twitter", _cfg(), pool, "Milei", tmp_path, [], estado)
     assert capturas == []
     assert llamadas == ["a.json"]  # sin reintento: una sola llamada
+    assert estado["challenges_consecutivos"] == 4  # el corte igual contabiliza el challenge (3 -> 4)
+    assert pool["cuentas"][0]["estado"] == "activa"  # un challenge nunca quema la cuenta
 
 
 def test_capturar_candidato_sin_cuentas_devuelve_vacio(tmp_path):
