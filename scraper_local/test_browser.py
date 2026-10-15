@@ -90,3 +90,17 @@ def test_capturar_elemento_un_scroll_no_scrollea(tmp_path, monkeypatch):
     rutas = browser.capturar_elemento(page, "#c", scrolls=1, esperas=(0, 0),
                                       carpeta=tmp_path, prefijo="uno")
     assert len(rutas) == 1 and page.selectores_evaluados == []
+
+
+def test_user_agent_usa_el_major_real_sin_headless():
+    ua = browser._user_agent("140.0.7259.5")
+    assert "Chrome/140.0.0.0" in ua
+    assert "Windows NT 10.0" in ua
+    assert "HeadlessChrome" not in ua
+
+
+def test_user_agent_fallback_si_version_rara():
+    ua = browser._user_agent("")
+    assert "Chrome/120.0.0.0" in ua
+    assert "HeadlessChrome" not in ua
+    assert browser._user_agent("no-es-version").startswith("Mozilla/5.0")

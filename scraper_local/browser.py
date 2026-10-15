@@ -18,6 +18,20 @@ from pathlib import Path
 
 TIMEOUT_FEED_MS = 30000
 
+UA_MAJOR_FALLBACK = "120"
+
+
+def _user_agent(version: str) -> str:
+    """UA de Chrome para Windows usando el major REAL del navegador (ej. '140.0.7259.5'
+    -> 140), para que no se desactualice. Sin el token 'HeadlessChrome'. Si `version`
+    no empieza con dígitos, usa UA_MAJOR_FALLBACK."""
+    major = (version or "").split(".")[0]
+    if not major.isdigit():
+        major = UA_MAJOR_FALLBACK
+    return (f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            f"AppleWebKit/537.36 (KHTML, like Gecko) "
+            f"Chrome/{major}.0.0.0 Safari/537.36")
+
 
 class SesionInvalidaError(Exception):
     """La sesión no sirve de verdad (la red redirigió a login/challenge). Es la
@@ -81,6 +95,9 @@ def pagina_con_sesion(sesion: Path, viewport, headless: bool):
         context = navegador.new_context(
             storage_state=str(sesion),
             viewport={"width": viewport[0], "height": viewport[1]},
+            user_agent=_user_agent(navegador.version),
+            locale="es-AR",
+            timezone_id="America/Argentina/Buenos_Aires",
             permissions=["notifications"])  # evita el popup "Activar notificaciones"
         try:
             yield context.new_page()
