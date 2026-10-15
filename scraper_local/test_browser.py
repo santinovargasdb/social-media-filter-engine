@@ -101,6 +101,7 @@ def test_user_agent_usa_el_major_real_sin_headless():
 
 def test_user_agent_fallback_si_version_rara():
     ua = browser._user_agent("")
-    assert "Chrome/120.0.0.0" in ua
+    assert f"Chrome/{browser.UA_MAJOR_FALLBACK}.0.0.0" in ua
+    assert "Windows NT 10.0" in ua
     assert "HeadlessChrome" not in ua
     assert browser._user_agent("no-es-version").startswith("Mozilla/5.0")
