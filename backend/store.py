@@ -14,15 +14,26 @@ apagada. Solo usa `requests` (nada de SDK). Config por variables de entorno:
 El snapshot (`payload`) tiene la MISMA forma que devuelve `electoral.run_boca_de_urna`
 (candidatos / evidencia / comparacion / meta), así el frontend no cambia.
 """
+import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 import requests
+
+log = logging.getLogger("urna.store")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 _TABLE = os.environ.get("URNA_SNAPSHOT_TABLE", "urna_snapshot")
 _TIMEOUT = 15
+
+# Subir el snapshot es el paso MÁS CARO de la corrida (sucede tras ~20 min de
+# scraping + visión) y el único sin reintento: un blip de red lo descartaba todo
+# y dejaba el tablero sin actualizar (medido 2026-10-15). Se reintenta con backoff
+# —mismo criterio que el resto del scraper ante fallos transitorios—.
+WRITE_INTENTOS = 3            # 1 intento + 2 reintentos
+_WRITE_BACKOFF = (2, 5)       # seg de espera antes de cada reintento
 
 # Los `generado_en` se guardan en UTC pero el usuario piensa en día argentino
 # (UTC-3, sin horario de verano desde 2009).
@@ -112,17 +123,27 @@ def read_snapshot_history(limite: int = 120) -> list[dict]:
 
 def write_snapshot(payload: dict, generado_en: str) -> bool:
     """Guarda un snapshot nuevo (lo usa el scraper local). `generado_en` en ISO 8601.
-    Devuelve True si se guardó, False si no."""
+    Reintenta ante fallos transitorios de red (WRITE_INTENTOS con backoff) para no
+    descartar una corrida entera por un blip. Devuelve True si se guardó, False si no.
+    El motivo de cada fallo va al log (no a stdout) para que quede en el run-*.log."""
     if not SUPABASE_URL or not SUPABASE_KEY:
-        print("ERROR store.write: Supabase no configurado.")
+        log.error("store.write: Supabase no configurado.")
         return False
-    try:
-        resp = requests.post(
-            f"{SUPABASE_URL}/rest/v1/{_TABLE}",
-            json={"payload": payload, "generado_en": generado_en},
-            headers={**_headers(), "Content-Type": "application/json"}, timeout=_TIMEOUT)
-        resp.raise_for_status()
-        return True
-    except requests.exceptions.RequestException as e:
-        print(f"ERROR store.write: {e}")
-        return False
+    url = f"{SUPABASE_URL}/rest/v1/{_TABLE}"
+    headers = {**_headers(), "Content-Type": "application/json"}
+    body = {"payload": payload, "generado_en": generado_en}
+    for intento in range(1, WRITE_INTENTOS + 1):
+        try:
+            resp = requests.post(url, json=body, headers=headers, timeout=_TIMEOUT)
+            resp.raise_for_status()
+            if intento > 1:
+                log.info("store.write: snapshot subido en el intento %d/%d.", intento, WRITE_INTENTOS)
+            return True
+        except requests.exceptions.RequestException as e:
+            ultimo = intento == WRITE_INTENTOS
+            log.error("store.write: falló el intento %d/%d: %s%s",
+                      intento, WRITE_INTENTOS, e, "" if ultimo else " (reintento).")
+            if ultimo:
+                return False
+            time.sleep(_WRITE_BACKOFF[min(intento - 1, len(_WRITE_BACKOFF) - 1)])
+    return False

@@ -82,3 +82,42 @@ def test_read_snapshot_history_liviano_y_ascendente(monkeypatch):
 def test_read_snapshot_history_sin_config_devuelve_vacio(monkeypatch):
     monkeypatch.setattr(store, "SUPABASE_URL", "")
     assert store.read_snapshot_history() == []
+
+
+class _RespPost:
+    def raise_for_status(self):
+        pass
+
+
+def _mock_post(monkeypatch, intentos, fallar_n):
+    """fake POST que lanza ConnectionError en los primeros `fallar_n` intentos y
+    luego sube bien. `intentos` acumula cada llamada para contarlas."""
+    def fake_post(url, json=None, headers=None, timeout=None):
+        intentos.append(url)
+        if len(intentos) <= fallar_n:
+            raise store.requests.exceptions.ConnectionError("blip de red")
+        return _RespPost()
+    monkeypatch.setattr(store.requests, "post", fake_post)
+    monkeypatch.setattr(store, "SUPABASE_URL", "https://fake.supabase.co")
+    monkeypatch.setattr(store, "SUPABASE_KEY", "k")
+    monkeypatch.setattr("time.sleep", lambda _s: None)  # no esperar el backoff en el test
+
+
+def test_write_snapshot_reintenta_ante_fallo_transitorio_y_sube(monkeypatch):
+    # Un blip de red (como el que tiró abajo la corrida del 15/10 con 62 posts
+    # electorales ya juntados) NO debe descartar la corrida entera: reintenta y sube.
+    intentos = []
+    _mock_post(monkeypatch, intentos, fallar_n=1)
+    ok = store.write_snapshot({"meta": {}}, "2026-10-16T12:00:00+00:00")
+    assert ok is True
+    assert len(intentos) == 2  # falló 1 vez, reintentó y subió
+
+
+def test_write_snapshot_agota_reintentos_y_devuelve_false(monkeypatch):
+    # Si Supabase está caído DE VERDAD, agota los reintentos y recién ahí devuelve
+    # False — así run.py sigue sin pisar el snapshot anterior (regla de seguridad).
+    intentos = []
+    _mock_post(monkeypatch, intentos, fallar_n=99)
+    ok = store.write_snapshot({"meta": {}}, "2026-10-16T12:00:00+00:00")
+    assert ok is False
+    assert len(intentos) == 3  # == store.WRITE_INTENTOS (1 intento + 2 reintentos)
