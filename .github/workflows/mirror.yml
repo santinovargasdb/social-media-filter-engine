@@ -1,0 +1,36 @@
+name: Espejo a smata-development
+
+# Espeja main al repo de la organización (smata-development) ante cada push a main,
+# INCLUIDAS las ediciones hechas por la web — que el multi-push de la PC no arrastra.
+# Dirección única santinovargasdb -> smata-development: es el único lado donde
+# santinovargasdb tiene admin para guardar el secret. El push NO es forzado: si el
+# espejo divergió (edición web del otro lado), falla a propósito en vez de pisar nada.
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-main
+  cancel-in-progress: false
+
+jobs:
+  espejo:
+    # El archivo también llega a smata-development por el push; ahí NO debe actuar.
+    if: github.repository == 'santinovargasdb/social-media-filter-engine'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push de main al repo de la org
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "Falta el secret MIRROR_TOKEN (Settings > Secrets and variables > Actions)."; exit 1
+          fi
+          git push "https://x-access-token:${MIRROR_TOKEN}@github.com/smata-development/social-media-filter-engine.git" HEAD:main
