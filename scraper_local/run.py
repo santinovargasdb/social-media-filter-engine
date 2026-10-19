@@ -280,7 +280,8 @@ def _umbral_de(cfg: dict) -> int:
 
 
 def _armar_resultado(runid, redes_corridas, exit_code, posts_por_red,
-                     warnings_finales, posts_electorales, umbral_warnings):
+                     warnings_finales, posts_electorales, umbral_warnings,
+                     errores_cuota_por_red=None):
     """Arma el dict de resultado de una corrida y le pega el veredicto de alertas."""
     cuentas_quemadas = [w for w in warnings_finales if "marcada como quemada" in w]
     resultado = {
@@ -292,6 +293,8 @@ def _armar_resultado(runid, redes_corridas, exit_code, posts_por_red,
         "warnings_total": len(warnings_finales),
         "cuentas_quemadas": cuentas_quemadas,
         "posts_electorales": posts_electorales,
+        # Solo las redes que tuvieron capturas sin leer por cuota de Gemini (429/503).
+        "errores_cuota_por_red": {k: v for k, v in (errores_cuota_por_red or {}).items() if v},
     }
     veredicto = alertas.evaluar(resultado, umbral_warnings=umbral_warnings)
     resultado["nivel"] = veredicto["nivel"] if veredicto else "ok"
@@ -321,6 +324,15 @@ def _escribir_resultado(resultado: dict) -> None:
         log.exception("No se pudo escribir el resultado de la corrida (se ignora).")
 
 
+def _agrupar_por_contexto(capturas: list[dict]) -> list[list[dict]]:
+    """Agrupa las capturas que comparten `contexto` para leerlas en UNA sola llamada a
+    visión. Preserva el orden de primera aparición de cada contexto (dict ordenado)."""
+    grupos: dict[str, list[dict]] = {}
+    for cap in capturas:
+        grupos.setdefault(cap["contexto"], []).append(cap)
+    return list(grupos.values())
+
+
 def correr(cfg: dict, dry_run: bool = False) -> int:
     inicio = datetime.now(timezone.utc)
     carpeta = DIR_CAPTURAS / inicio.strftime("%Y%m%d-%H%M")
@@ -329,6 +341,7 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
 
     bloques: list[dict] = []
     posts_por_red: dict[str, int] = {}
+    errores_cuota_por_red: dict[str, int] = {}
     for red_nombre in cfg["redes"]:
         if red_nombre not in redes.POR_NOMBRE:
             warnings.append(f"Red desconocida en config: '{red_nombre}' (se saltea).")
@@ -336,21 +349,30 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
         pool = accounts.cargar_pool(red=red_nombre)
         crudos_red: list[dict] = []
         errores = 0
+        errores_cuota = 0  # subconjunto de `errores` por falta de cuota de Gemini (429/503)
         estado_red = {"challenges_consecutivos": 0}
         for i, candidato in enumerate(candidatos):
             log.info("[%s] Candidato %d/%d: %s", red_nombre, i + 1, len(candidatos), candidato)
             capturas = capturar_candidato(red_nombre, cfg, pool, candidato, carpeta, warnings, estado_red)
-            for cap in capturas:
-                leidos = vision.read_capture(cap["ruta"], red_nombre, candidatos,
-                                             contexto=cap["contexto"])
+            # Las capturas de un candidato que comparten contexto se leen JUNTAS en una
+            # sola llamada a visión (varias imágenes por request) para no gastar una
+            # llamada de cuota por cada scroll.
+            for grupo in _agrupar_por_contexto(capturas):
+                rutas = [c["ruta"] for c in grupo]
+                leidos, status = vision.read_captures(rutas, red_nombre, candidatos,
+                                                      contexto=grupo[0]["contexto"])
                 if leidos is None:
-                    errores += 1
-                    warnings.append(f"Lectura fallida (Gemini) de {cap['ruta'].name}.")
+                    errores += len(grupo)
+                    if status in (429, 503):
+                        errores_cuota += len(grupo)
+                    nombres = ", ".join(r.name for r in rutas)
+                    warnings.append(f"Lectura fallida (Gemini) de {len(grupo)} captura(s): {nombres}.")
                     continue
                 crudos_red.extend(leidos)
             if i + 1 < len(candidatos) and capturas:
                 browser.esperar_aleatorio(tuple(cfg["espera_entre_candidatos"]))
         accounts.guardar_pool(pool, red=red_nombre)
+        errores_cuota_por_red[red_nombre] = errores_cuota
         posts_red = dedup.dedup_posts(crudos_red)
         posts_por_red[red_nombre] = len(posts_red)
         log.info("[%s] Posts: %d crudos, %d tras dedup, %d errores de lectura.",
@@ -382,7 +404,8 @@ def correr(cfg: dict, dry_run: bool = False) -> int:
 
     umbral = _umbral_de(cfg)
     resultado = _armar_resultado(inicio.strftime("%Y%m%d-%H%M"), cfg["redes"].keys(),
-                                 exit_code, posts_por_red, warnings_finales, pe, umbral)
+                                 exit_code, posts_por_red, warnings_finales, pe, umbral,
+                                 errores_cuota_por_red=errores_cuota_por_red)
     _escribir_resultado(resultado)
     return exit_code
 

@@ -48,12 +48,20 @@ def _load_image(image, mime: str | None = None) -> tuple[str, str]:
     return base64.b64encode(data).decode("ascii"), mime
 
 
-def _build_vision_prompt(red: str, candidatos: list[str], contexto: str = "") -> str:
+def _build_vision_prompt(red: str, candidatos: list[str], contexto: str = "", n_capturas: int = 1) -> str:
     lista = ", ".join(candidatos)
     ctx = f"\nCONTEXTO DE LA CAPTURA: {contexto}.\n" if contexto else ""
+    if n_capturas <= 1:
+        intro = (f'Vas a recibir UNA CAPTURA DE PANTALLA de la red social "{red}". '
+                 "Tu tarea es EXTRAER cada publicación visible y clasificarla, en una sola pasada.")
+    else:
+        intro = (f'Vas a recibir {n_capturas} CAPTURAS DE PANTALLA de la red social "{red}". '
+                 "Son scrolls/vistas de la MISMA búsqueda: extraé las publicaciones de TODAS las "
+                 "capturas, en orden, SIN repetir una publicación que aparezca en más de una. "
+                 "Clasificá cada una en la misma pasada.")
     return f"""Sos un analista de opinión pública que evalúas publicaciones de redes sociales del ámbito argentino de cara a las próximas elecciones presidenciales.
 
-Vas a recibir UNA CAPTURA DE PANTALLA de la red social "{red}". Tu tarea es EXTRAER cada publicación visible y clasificarla, en una sola pasada.
+{intro}
 {ctx}
 REGLAS DE LECTURA DE PANTALLA (OBLIGATORIAS):
 - Extraé SOLO las publicaciones COMPLETAMENTE visibles. Si una publicación está cortada por un borde de la captura, ignorala.
@@ -131,6 +139,26 @@ def read_capture(image, red: str, candidatos: list[str] | None = None,
     return _sanitize_posts(parsed, red)
 
 
+def read_captures(images, red: str, candidatos: list[str] | None = None,
+                  contexto: str = "") -> tuple[list[dict] | None, int | None]:
+    """Lee VARIAS capturas (que comparten `red` y `contexto`) en UNA sola llamada a
+    Gemini — varias inline_data en el mismo request — para no gastar una llamada de
+    cuota por scroll. `images` es una lista de rutas (str/Path) o bytes.
+
+    Devuelve (posts, status): posts son los posts saneados ([] si no se vio ninguno),
+    o None si el transporte falló. `status` es el HTTP de Gemini (429/503 = sin
+    cuota / saturado) para que run.py distinga 'fue la cuota' de 'fue el scraping'."""
+    cargadas = [_load_image(img) for img in images]
+    prompt = _build_vision_prompt(red, candidatos or CANDIDATOS_DEFAULT, contexto,
+                                  n_capturas=len(cargadas))
+    _pace()
+    parsed, status = gemini_client.run_with_rotation(prompt, image=cargadas)
+    if parsed is None:
+        print("ERROR vision: Gemini no devolvió resultado (upstream).")
+        return None, status
+    return _sanitize_posts(parsed, red), status
+
+
 def _pace() -> None:
     """Espera lo que falte del intervalo mínimo entre llamadas (free-tier)."""
     global _last_call
@@ -147,6 +175,12 @@ def _pace() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # La consola de Windows suele ser cp1252 y revienta al imprimir el JSON cuando
+    # trae emojis/caracteres fuera de ese set. Forzamos UTF-8 en stdout si se puede.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     ap = argparse.ArgumentParser(
         description="Lee una captura de una red social con Gemini visión y devuelve los posts en JSON.")
     ap.add_argument("captura", help="ruta de la imagen (png/jpg/webp)")

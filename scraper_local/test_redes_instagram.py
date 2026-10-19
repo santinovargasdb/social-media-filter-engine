@@ -39,25 +39,20 @@ def test_links_de_posts_menos_que_pedidos():
     assert instagram.links_de_posts([], 3) == []
 
 
-def test_hashtags_para_no_mapeado_con_enie_agrega_variante_ascii():
-    assert instagram._hashtags_para("Sergio Uñac", {}) == ["SergioUñac", "SergioUnac"]
+def test_perfil_para_candidato_con_perfil_por_defecto():
+    assert instagram._perfil_para("Javier Milei", {}) == "javiermilei"
+    assert instagram._perfil_para("Axel Kicillof", {}) == "kicillofok"
 
 
-def test_hashtags_para_candidato_mapeado_ascii_sin_variante():
-    assert instagram._hashtags_para("Cristina Fernández de Kirchner", {}) == ["cfk"]
+def test_perfil_para_candidato_sin_perfil_es_none():
+    assert instagram._perfil_para("Myriam Bregman", {}) is None
 
 
-def test_hashtags_para_nombre_ascii_sin_variante():
-    assert instagram._hashtags_para("Javier Milei", {}) == ["javierMilei"]
+def test_perfil_para_override_de_config_pisa_default():
+    cfg_red = {"perfiles_candidatos": {"Cristina Fernández de Kirchner": "cfkoficial"}}
+    assert instagram._perfil_para("Cristina Fernández de Kirchner", cfg_red) == "cfkoficial"
 
 
-def test_hashtags_para_override_no_ascii_agrega_variante_ascii():
-    cfg_red = {"hashtags_candidatos": {"Sergio Uñac": "uñacGobernador"}}
-    assert instagram._hashtags_para("Sergio Uñac", cfg_red) == [
-        "uñacGobernador", "unacGobernador"
-    ]
-
-
-def test_hashtags_para_dedup_si_plegado_igual_al_primario():
-    cfg_red = {"hashtags_candidatos": {"Sergio Uñac": "sergiounac"}}
-    assert instagram._hashtags_para("Sergio Uñac", cfg_red) == ["sergiounac"]
+def test_perfil_para_quita_arroba_y_espacios():
+    cfg_red = {"perfiles_candidatos": {"Javier Milei": "  @MileiOficial  "}}
+    assert instagram._perfil_para("Javier Milei", cfg_red) == "MileiOficial"

@@ -175,3 +175,50 @@ def test_read_capture_pasa_contexto_al_prompt(monkeypatch, tmp_path):
     visto = _mock_gemini(monkeypatch)
     vision.read_capture(cap, "tiktok", contexto="comentarios sobre Milei")
     assert "CONTEXTO DE LA CAPTURA: comentarios sobre Milei" in visto["prompt"]
+
+
+def test_read_captures_manda_todas_en_una_llamada(monkeypatch, tmp_path):
+    """Varias capturas de un candidato → UNA sola llamada con todas las imágenes
+    (ahorro de cuota). Devuelve (posts_saneados, status)."""
+    monkeypatch.setenv("VISION_MIN_INTERVAL", "0")
+    c1 = tmp_path / "a.png"; c1.write_bytes(b"uno")
+    c2 = tmp_path / "b.jpg"; c2.write_bytes(b"dos")
+    visto = _mock_gemini(monkeypatch)
+    posts, status = vision.read_captures([c1, c2], "tiktok")
+    assert visto["image"] == [
+        (base64.b64encode(b"uno").decode("ascii"), "image/png"),
+        (base64.b64encode(b"dos").decode("ascii"), "image/jpeg"),
+    ]
+    assert status is None
+    assert [p["texto"] for p in posts] == ["Gran discurso de Milei", "posturas inválidas"]
+    assert "2 CAPTURAS" in visto["prompt"]  # el prompt avisa que son varias
+
+
+def test_read_captures_upstream_devuelve_none_y_status(monkeypatch, tmp_path):
+    """Si el transporte falla, devuelve (None, status) para que run.py distinga la cuota."""
+    monkeypatch.setenv("VISION_MIN_INTERVAL", "0")
+    c = tmp_path / "a.png"; c.write_bytes(b"x")
+    _mock_gemini(monkeypatch, respuesta=(None, 429))
+    posts, status = vision.read_captures([c], "tiktok")
+    assert posts is None and status == 429
+
+
+def test_build_prompt_varias_capturas_lo_dice():
+    p = vision._build_vision_prompt("tiktok", ["Javier Milei"], n_capturas=3)
+    assert "3 CAPTURAS" in p
+    assert "TODAS" in p  # pide extraer de todas las capturas, sin repetir
+
+
+def test_cli_imprime_no_ascii_en_consola_cp1252(monkeypatch, tmp_path):
+    """El CLI no crashea cuando stdout es cp1252 (consola Windows) y el JSON trae emojis."""
+    import io
+    cap = tmp_path / "cap.png"; cap.write_bytes(b"x")
+    monkeypatch.setattr(vision, "read_capture",
+                        lambda image, red, candidatos=None, mime=None: [{"texto": "Milei 🚀 arrasa", "red": red}])
+    raw = io.BytesIO()
+    buf = io.TextIOWrapper(raw, encoding="cp1252", newline="")
+    monkeypatch.setattr(vision.sys, "stdout", buf)
+    rc = vision.main([str(cap), "--red", "tiktok"])
+    buf.flush()
+    assert rc == 0
+    assert "Milei 🚀 arrasa" in raw.getvalue().decode("utf-8")

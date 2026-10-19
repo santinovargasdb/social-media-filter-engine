@@ -101,6 +101,34 @@ def test_generate_raw_vision_manda_inline_data(monkeypatch):
     assert parts[1] == {"inline_data": {"mime_type": "image/png", "data": "QUJD"}}
 
 
+def test_generate_raw_multi_imagen_manda_varias_inline_data(monkeypatch):
+    """Con una LISTA de imágenes, el payload lleva el texto + una inline_data por
+    imagen, en orden. Permite agrupar varias capturas en UNA sola llamada (ahorro de cuota)."""
+    capturado = {}
+    def fake_post(url, headers=None, json=None, timeout=None):
+        capturado["payload"] = json
+        return _FakeResp()
+    monkeypatch.setattr(gc.requests, "post", fake_post)
+    raw, _ = gc.generate_raw("m", "k", "lee las capturas",
+                             image=[("AAA", "image/png"), ("BBB", "image/jpeg")])
+    assert raw == "[]"
+    parts = capturado["payload"]["contents"][0]["parts"]
+    assert parts[0] == {"text": "lee las capturas"}
+    assert parts[1] == {"inline_data": {"mime_type": "image/png", "data": "AAA"}}
+    assert parts[2] == {"inline_data": {"mime_type": "image/jpeg", "data": "BBB"}}
+
+
+def test_generate_raw_lista_vacia_no_manda_inline_data(monkeypatch):
+    """Una lista vacía se comporta como 'sin imagen': solo la part de texto."""
+    capturado = {}
+    def fake_post(url, headers=None, json=None, timeout=None):
+        capturado["payload"] = json
+        return _FakeResp()
+    monkeypatch.setattr(gc.requests, "post", fake_post)
+    gc.generate_raw("m", "k", "solo texto", image=[])
+    assert capturado["payload"]["contents"][0]["parts"] == [{"text": "solo texto"}]
+
+
 def test_cascada_y_rotacion_pasan_la_imagen(monkeypatch):
     """run_with_rotation → run_cascade → call_gemini_json propagan la imagen intacta."""
     monkeypatch.setenv("GEMINI_API_KEY", "k")

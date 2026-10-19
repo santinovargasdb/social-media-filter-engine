@@ -27,16 +27,19 @@ GEMINI_RETRY_STATUSES = (429, 503, 404)
 
 
 def generate_raw(model: str, api_key: str, prompt: str, timeout: int = 45,
-                 image: tuple[str, str] | None = None) -> tuple[str | None, int | None]:
+                 image: tuple[str, str] | list[tuple[str, str]] | None = None) -> tuple[str | None, int | None]:
     """Llamada cruda a un modelo Gemini. Devuelve (texto_sin_fences, http_status_si_error).
     - (texto, None): éxito       - (None, status): error HTTP       - (None, None): error de red.
-    `image`: (data_base64, mime_type) opcional — agrega la imagen al prompt (visión)."""
+    `image`: una (data_base64, mime_type) o una LISTA de ellas — agrega una inline_data
+    por imagen al prompt (visión). Varias imágenes en una sola llamada ahorran cuota."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
     parts: list[dict] = [{"text": prompt}]
-    if image is not None:
-        data_b64, mime = image
-        parts.append({"inline_data": {"mime_type": mime, "data": data_b64}})
+    if image:
+        # Un único tuple (b64, mime) tiene str en [0]; una lista de tuples tiene tuples.
+        imagenes = [image] if isinstance(image[0], str) else image
+        for data_b64, mime in imagenes:
+            parts.append({"inline_data": {"mime_type": mime, "data": data_b64}})
     payload = {"contents": [{"parts": parts}]}
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=timeout)

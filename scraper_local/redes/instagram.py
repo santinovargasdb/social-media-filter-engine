@@ -1,31 +1,32 @@
 # scraper_local/redes/instagram.py
-"""Búsqueda en Instagram vía sidebar search + posts individuales para punteros.
+"""Captura de posts de Instagram por PERFIL de cada candidato.
 
-Flujo: Home → click icono búsqueda sidebar → tipeo con delay humano →
-pestaña Posts → extrae links de posts vía DOM (sin Gemini sobre la grilla,
-los thumbnails no tienen texto) → abre posts de punteros y los captura.
+IG rompió el browse de hashtags en la web (verificado en vivo 2026-10-19:
+/explore/tags/<x>/ redirige a /explore/search/keyword/?q=%23<x> y la página
+devuelve "Se produjo un error y no se pudo cargar la página", con 0 posts —
+pasa igual headless y visible, con sesión logueada y válida). Los PERFILES sí
+cargan normal, así que se scrapean las cuentas oficiales de los candidatos:
+se abre /<handle>/, se extraen los links de posts de la grilla (a[href*='/p/'])
+y se capturan los primeros N.
 
 Los selectores REALES se tunean en la PC de la oficina (marcados TUNEAR)."""
-import unicodedata
 from pathlib import Path
 
 import browser
 
-IG_HOME_URL = "https://www.instagram.com/"
-LOGIN_URL   = "https://www.instagram.com/accounts/login/"
-
-SELECTOR_POST_LINKS = "a[href*='/p/']"   # links a posts en grilla de hashtag # TUNEAR
-SELECTOR_CHALLENGE  = "[data-testid*='challenge'], [class*='challenge']"
+SELECTOR_POST_LINKS = "a[href*='/p/']"   # links a posts en la grilla del perfil
 MARCAS_SESION_MUERTA = ("/accounts/login/", "/challenge/")
 
-# Hashtags por defecto para cada candidato. Sobreescribibles en config.json
-# → instagram.hashtags_candidatos: {"Nombre": "hashtag_sin_numeral"}
-HASHTAGS_CANDIDATOS: dict[str, str] = {
-    "Javier Milei":                   "javierMilei",
-    "Axel Kicillof":                  "kicillof",
-    "Sergio Massa":                   "sergiomassa",
-    "Patricia Bullrich":              "bullrich",
-    "Cristina Fernández de Kirchner": "cfk",
+# Candidato -> handle de IG (sin @). Sobreescribible/extensible en config.json
+# → instagram.perfiles_candidatos: {"Nombre": "handle_sin_arroba"}.
+# Handles verificados en vivo 2026-10-19 (cargan grilla con posts). CFK no tiene
+# cuenta web cargable con los handles probados: se deja fuera y se configura
+# aparte cuando se consiga el correcto (si no, queda un warning claro).
+PERFILES_CANDIDATOS: dict[str, str] = {
+    "Javier Milei":      "javiermilei",
+    "Axel Kicillof":     "kicillofok",
+    "Sergio Massa":      "sergiomassa",
+    "Patricia Bullrich": "patobullrich",
 }
 
 
@@ -50,26 +51,15 @@ def links_de_posts(hrefs: list[str], cantidad: int) -> list[str]:
     return out
 
 
-def _plegar_ascii(texto: str) -> str:
-    """Quita marcas diacríticas (ñ→n, tildes fuera) vía descomposición NFD."""
-    descompuesto = unicodedata.normalize("NFD", texto)
-    return "".join(c for c in descompuesto if not unicodedata.combining(c))
-
-
-def _hashtags_para(termino: str, cfg_red: dict) -> list[str]:
-    """Hashtags de Instagram a intentar para el término dado (sin #), en orden.
-
-    El primario sale del mapping (defaults sobreescritos por cfg_red) o del
-    término sin espacios ni símbolos; si tiene diacríticos se agrega la
-    variante plegada a ASCII como fallback (SergioUñac → SergioUnac)."""
-    mapping = dict(HASHTAGS_CANDIDATOS)
-    mapping.update(cfg_red.get("hashtags_candidatos") or {})
-    if termino in mapping:
-        primario = mapping[termino]
-    else:
-        primario = "".join(c for c in termino.replace(" ", "") if c.isalnum())
-    plegado = _plegar_ascii(primario)
-    return [primario] if plegado == primario else [primario, plegado]
+def _perfil_para(termino: str, cfg_red: dict) -> str | None:
+    """Handle de IG (sin @) del candidato, o None si no hay uno configurado.
+    El default se puede pisar/extender con cfg_red['perfiles_candidatos']."""
+    mapping = dict(PERFILES_CANDIDATOS)
+    mapping.update(cfg_red.get("perfiles_candidatos") or {})
+    handle = mapping.get(termino)
+    if not handle:
+        return None
+    return handle.strip().lstrip("@").strip()
 
 
 def _verificar_sesion(page) -> None:
@@ -77,47 +67,55 @@ def _verificar_sesion(page) -> None:
         raise browser.SesionInvalidaError(f"redirigido a {page.url}")
 
 
+def _perfil_no_disponible(page) -> bool:
+    """IG muestra 'no está disponible' (handle inexistente) o 'se produjo un error'
+    SIN cambiar la URL a login/challenge; por eso hay que leer el texto del body."""
+    txt = page.evaluate("() => document.body.innerText.toLowerCase()")
+    return ("no está disponible" in txt or "no disponible" in txt
+            or "se produjo un error" in txt)
+
+
 def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
              carpeta: Path, prefijo: str, warnings: list[str]) -> list[dict]:
     from playwright.sync_api import TimeoutError as PWTimeout  # diferido
     esperas = tuple(cfg["espera_entre_scrolls"])
-    hashtags = _hashtags_para(termino, cfg_red)
+
+    # En IG solo abrimos posts de los punteros (candidatos_posts); el resto no se captura.
+    if termino not in (cfg_red.get("candidatos_posts") or []):
+        return []
+
+    handle = _perfil_para(termino, cfg_red)
+    if not handle:
+        warnings.append(
+            f"[instagram] Sin perfil de IG configurado para '{termino}' "
+            "(agregá su handle en instagram.perfiles_candidatos).")
+        return []
 
     with browser.pagina_con_sesion(sesion, tuple(cfg["viewport"]), cfg["headless"]) as page:
-        # Probar cada variante de hashtag hasta que una muestre posts
-        for hashtag in hashtags:
-            page.goto(f"https://www.instagram.com/explore/tags/{hashtag}/",
-                      timeout=browser.TIMEOUT_FEED_MS)
-            try:
-                page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
-                pass
-            browser.esperar_aleatorio((2, 4))
-            _verificar_sesion(page)
-            try:
-                page.wait_for_selector(SELECTOR_POST_LINKS, timeout=browser.TIMEOUT_FEED_MS)
-                break
-            except PWTimeout:
-                continue
-        else:
-            intentados = " ni ".join(f"'#{h}'" for h in hashtags)
-            warnings.append(
-                f"[instagram] Sin posts para {intentados} (¿hashtag inexistente?).")
+        page.goto(f"https://www.instagram.com/{handle}/", timeout=browser.TIMEOUT_FEED_MS)
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        browser.esperar_aleatorio((2, 4))
+        _verificar_sesion(page)
+        if _perfil_no_disponible(page):
+            warnings.append(f"[instagram] El perfil @{handle} de '{termino}' no cargó "
+                            "(¿handle incorrecto o cuenta privada?).")
+            return []
+        try:
+            page.wait_for_selector(SELECTOR_POST_LINKS, timeout=browser.TIMEOUT_FEED_MS)
+        except PWTimeout:
+            warnings.append(f"[instagram] Sin posts visibles en @{handle} ('{termino}').")
             return []
 
-        # Scroll para exponer más posts antes de extraer
+        # Scroll para exponer más posts antes de extraer los links.
         for _ in range(cfg_red.get("scrolls_por_candidato", 1)):
             page.evaluate("window.scrollBy(0, window.innerHeight * 0.9)")
             browser.esperar_aleatorio(esperas)
 
         hrefs = page.eval_on_selector_all(SELECTOR_POST_LINKS, "els => els.map(e => e.href)")
-
-        candidatos_posts = cfg_red.get("candidatos_posts") or []
-        if termino not in candidatos_posts:
-            return []  # candidato no puntero: sin Gemini para IG
-
-        posts_por_candidato = cfg_red.get("posts_por_candidato", 3)
-        post_links = links_de_posts(hrefs, posts_por_candidato)
+        post_links = links_de_posts(hrefs, cfg_red.get("posts_por_candidato", 3))
         capturas = []
         for i, link in enumerate(post_links):
             try:
@@ -125,7 +123,7 @@ def capturar(sesion: Path, termino: str, cfg: dict, cfg_red: dict,
                 _verificar_sesion(page)
                 browser.esperar_aleatorio((2, 3))
                 contexto = (
-                    f"publicación de Instagram sobre {termino}; "
+                    f"publicación de Instagram del perfil de {termino}; "
                     "la caption y los comentarios visibles cuentan como publicaciones separadas"
                 )
                 rutas = browser.capturar_pagina(

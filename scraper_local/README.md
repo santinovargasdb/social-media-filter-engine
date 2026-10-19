@@ -14,7 +14,7 @@ Diseño completo: `docs/superpowers/specs/2026-09-21-scraper-local-vision-design
   **En producción desde 2026-09-23**: corre en la PC de la oficina vía Task
   Scheduler (tarea "SMATA Boca de Urna - Scraper", 10:00 y 16:00).
 - ✅ **Fase 4a:** TikTok (`redes/tiktok.py`) — búsqueda + comentarios top de punteros. **Corre VISIBLE** (en headless TikTok mete captcha-slider; ver nota abajo).
-- ✅ **Fase 4b:** Instagram (`redes/instagram.py`) — navega directo a `/explore/tags/<hashtag>/`. En producción desde 2026-09-28.
+- ✅ **Fase 4b:** Instagram (`redes/instagram.py`) — scrapea los **perfiles** oficiales de los candidatos (`/<handle>/`). El browse de hashtags murió en la web (verificado 2026-10-19: `/explore/tags/` redirige y devuelve "Se produjo un error"), por eso se pivoteó a perfiles. Handles en `PERFILES_CANDIDATOS` / `instagram.perfiles_candidatos` del config.
 
 ## 1) Crear la tabla en Supabase
 En el proyecto de Supabase → **SQL Editor** → correr:

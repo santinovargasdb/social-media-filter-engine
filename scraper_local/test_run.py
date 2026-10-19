@@ -229,8 +229,8 @@ def _preparar_correr(monkeypatch, tmp_path, posts_por_captura, escritos):
     monkeypatch.setattr(run, "capturar_candidato",
                         lambda red_nombre, cfg, pool, cand, carpeta, warnings, estado_red=None: [
                             {"ruta": tmp_path / f"{red_nombre}-{cand}.png", "contexto": ""}])
-    monkeypatch.setattr(run.vision, "read_capture",
-                        lambda ruta, red, candidatos=None, contexto="": posts_por_captura)
+    monkeypatch.setattr(run.vision, "read_captures",
+                        lambda rutas, red, candidatos=None, contexto="": (posts_por_captura, None))
     monkeypatch.setattr(run.store, "write_snapshot",
                         lambda payload, generado_en: escritos.append(payload) or True)
     monkeypatch.setattr(run.browser, "esperar_aleatorio", lambda rango: None)
@@ -301,8 +301,8 @@ def test_correr_pasa_candidatos_a_vision(monkeypatch, tmp_path):
     escritos = []
     _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
     vistos = []
-    monkeypatch.setattr(run.vision, "read_capture",
-                        lambda ruta, red, candidatos=None, contexto="": vistos.append(candidatos) or [POST_MILEI])
+    monkeypatch.setattr(run.vision, "read_captures",
+                        lambda rutas, red, candidatos=None, contexto="": vistos.append(candidatos) or ([POST_MILEI], None))
     run.correr(_cfg(candidatos=["Solo Uno"]), dry_run=False)
     assert vistos and vistos[0] == ["Solo Uno"]
 
@@ -311,9 +311,9 @@ def test_correr_multi_red_arma_un_bloque_por_red(monkeypatch, tmp_path):
     escritos = []
     _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
     # vision devuelve el post según la red que se está capturando:
-    monkeypatch.setattr(run.vision, "read_capture",
-                        lambda ruta, red, candidatos=None, contexto="":
-                        [POST_MILEI] if red == "twitter" else [POST_TIKTOK])
+    monkeypatch.setattr(run.vision, "read_captures",
+                        lambda rutas, red, candidatos=None, contexto="":
+                        ([POST_MILEI], None) if red == "twitter" else ([POST_TIKTOK], None))
     cfg = _cfg(candidatos=["Javier Milei"])
     cfg["redes"] = {"twitter": {"scrolls_por_candidato": 3},
                     "tiktok": {"scrolls_por_candidato": 3, "videos_comentarios": 2,
@@ -322,6 +322,39 @@ def test_correr_multi_red_arma_un_bloque_por_red(monkeypatch, tmp_path):
     assert rc == 0 and len(escritos) == 1
     assert [b["red"] for b in escritos[0]["meta"]["bloques"]] == ["twitter", "tiktok"]
     assert escritos[0]["candidatos"][0]["por_red"] == {"twitter": 1, "tiktok": 1}
+
+
+def test_correr_agrupa_capturas_de_un_candidato_en_una_llamada(monkeypatch, tmp_path):
+    """Varias capturas de un candidato con el mismo contexto se leen en UNA sola
+    llamada a read_captures (ahorro de cuota de Gemini)."""
+    escritos = []
+    _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
+    monkeypatch.setattr(run, "capturar_candidato",
+                        lambda red_nombre, cfg, pool, cand, carpeta, warnings, estado_red=None: [
+                            {"ruta": tmp_path / f"{cand}-1.png", "contexto": ""},
+                            {"ruta": tmp_path / f"{cand}-2.png", "contexto": ""},
+                            {"ruta": tmp_path / f"{cand}-3.png", "contexto": ""}])
+    llamadas = []
+    monkeypatch.setattr(run.vision, "read_captures",
+                        lambda rutas, red, candidatos=None, contexto="":
+                        llamadas.append(list(rutas)) or ([POST_MILEI], None))
+    run.correr(_cfg(candidatos=["Javier Milei"]), dry_run=False)
+    assert len(llamadas) == 1       # 3 capturas -> 1 sola llamada
+    assert len(llamadas[0]) == 3    # con las 3 imágenes juntas
+
+
+def test_correr_cuenta_errores_de_cuota_por_red(monkeypatch, tmp_path):
+    """read_captures con None + status 429/503 se cuenta como error de cuota de la red,
+    para que el aviso sepa que fue Gemini y no el scraping."""
+    escritos = []
+    _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
+    monkeypatch.setattr(run.vision, "read_captures",
+                        lambda rutas, red, candidatos=None, contexto="": (None, 429))
+    capturados = []
+    monkeypatch.setattr(run, "_escribir_resultado", lambda r: capturados.append(r))
+    run.correr(_cfg(candidatos=["Javier Milei"]), dry_run=False)
+    assert capturados
+    assert capturados[0]["errores_cuota_por_red"]["twitter"] >= 1
 
 
 # --- Instagram ---
@@ -375,12 +408,12 @@ def test_correr_multi_red_tres_bloques(monkeypatch, tmp_path):
     escritos = []
     _preparar_correr(monkeypatch, tmp_path, [POST_MILEI], escritos)
     monkeypatch.setattr(
-        run.vision, "read_capture",
-        lambda ruta, red, candidatos=None, contexto="": {
+        run.vision, "read_captures",
+        lambda rutas, red, candidatos=None, contexto="": ({
             "twitter": [POST_MILEI],
             "tiktok": [POST_TIKTOK],
             "instagram": [POST_INSTAGRAM],
-        }.get(red, []))
+        }.get(red, []), None))
     cfg = _cfg(candidatos=["Javier Milei"])
     cfg["redes"] = {
         "twitter": {"scrolls_por_candidato": 3},

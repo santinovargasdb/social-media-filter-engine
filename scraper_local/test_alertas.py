@@ -61,3 +61,35 @@ def test_varios_motivos_se_concatenan():
     assert "No se pudo actualizar el tablero" in v["mensaje"]
     assert "twitter" in v["mensaje"]
     assert "30 avisos" in v["mensaje"]
+
+
+def test_red_en_cero_por_cuota_culpa_a_gemini_no_al_scraping():
+    v = alertas.evaluar(_base(posts_por_red={"twitter": 80, "tiktok": 0},
+                              errores_cuota_por_red={"tiktok": 56}))
+    assert v is not None
+    assert "Gemini" in v["mensaje"] and "cuota" in v["mensaje"]
+    assert "tiktok (captcha" not in v["mensaje"]  # NO culpar al scraping
+
+
+def test_cero_sin_cuota_sigue_siendo_captcha():
+    v = alertas.evaluar(_base(posts_por_red={"twitter": 80, "instagram": 0},
+                              errores_cuota_por_red={}))
+    assert v is not None
+    assert "instagram (captcha / cuenta quemada)" in v["mensaje"]
+
+
+def test_cuota_y_captcha_se_distinguen_en_la_misma_corrida():
+    # tiktok cae por cuota de Gemini, instagram por scraping (sin errores de cuota)
+    v = alertas.evaluar(_base(posts_por_red={"twitter": 80, "tiktok": 0, "instagram": 0},
+                              errores_cuota_por_red={"tiktok": 56}))
+    m = v["mensaje"]
+    assert "Gemini" in m and "cuota" in m
+    assert "instagram (captcha / cuenta quemada)" in m
+    assert "tiktok (captcha" not in m
+
+
+def test_errores_de_cuota_sin_red_en_cero_igual_alerta():
+    # Aunque ninguna red quede en 0, si hubo capturas sin leer por cuota, avisa.
+    v = alertas.evaluar(_base(posts_por_red={"twitter": 31}, warnings_total=2,
+                              errores_cuota_por_red={"twitter": 27}))
+    assert v is not None and "Gemini" in v["mensaje"]
